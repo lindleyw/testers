@@ -1,6 +1,8 @@
 # testers
 A rewrite of Ray's Perl Smoker Testers program
 
+See https://github.com/raytestinger/testers
+
 This uses Mojo and Minion to divide the testing into steps, each of
 which is performed and controlled by the Minion job queue.
 
