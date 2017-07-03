@@ -1,0 +1,483 @@
+#!/usr/bin/env perl
+
+use Mojolicious::Lite;
+
+use Mojo::URL;
+use Mojo::File;
+use Mojo::UserAgent;
+use Mojo::DOM;
+use v5.22;
+use strict;
+use warnings;
+
+################################################################
+
+# Can be called as, e.g.,
+#   $ perl smoketest update ~/Documents/02packages.details.txt -m rebuild
+# to rebuild and reload database from a local file, or:
+#   $ perl smoketest update
+# to update from the default CPAN location (remote URL)
+
+sub _text_extract {
+    my ($module_text) = @_;
+        
+    my $vals = {}; # populate with a hash slice:
+    @{$vals}{qw(name version relative_url)} = split /\s+/, $module_text;
+    $vals->{author} = ($vals->{relative_url} =~ m{^./../(\w+)/})[0];
+    # Replace text 'undef'
+    $vals->{version} = undef if ($vals->{version} eq 'undef');
+    return $vals;
+}
+
+sub update {
+    my ($self, $source) = @_;
+
+    my $module_list;
+    my $module_dom;
+
+    # If no source specified, load default remote module list
+    my $source_url = Mojo::URL->new($source // 'http://cpan.cpantesters.org/');
+
+    if ($source_url->protocol || $source_url->host) {
+        # Remote file
+        unless (length($source_url->path) > 1) {  # no path, or '/'
+            push @{$source_url->path->parts}, ( 'modules',
+                                                # '01modules.index.html'
+                                                '02packages.details.txt'
+                                              );
+        }
+        my $ua = Mojo::UserAgent->new();
+        $module_list = $ua->get($source_url)->result;
+        die "Can't download modules list: ".$module_list->message
+        unless $module_list->is_success;
+        $module_list = $module_list->body;   # ->dom;   # DOM for HTML
+    } else {
+        # Local file
+        $module_list = Mojo::File->new( $source)->slurp;
+        die "No module list file" unless length($module_list);
+        $module_dom = Mojo::DOM->new($module_list) if ($module_list =~ /<html/i);
+    }
+
+    my $module_tgzs;
+    # Note: Follows header/body convention as SMTP message
+    my $header = 1;
+    $module_tgzs = Mojo::Collection->new (
+                                          map {
+                                              if ($header) {
+                                                  $header = $_ !~ /^$/;  # false once we reach blank line
+                                                  ();                    # and skip this
+                                              } else {
+                                                  _text_extract($_);
+                                              }
+                                          } ( split (/\n/, $module_list ) )
+                                         );
+    $module_tgzs->each(sub { $self->app->db
+                             ->query('INSERT OR REPLACE INTO modules(name, version, author, relative_url) '.
+                                     'VALUES (?,?,?,?)',
+                                     $_->{name}, $_->{version}, $_->{author}, $_->{relative_url});
+                         });
+    return $module_tgzs->size;
+}
+
+# Find CPAN in the list of modules (it's currently under ANDK's directory)
+# Get the current revision's list of disabled modules and use that to refresh the disabled list
+
+# When relative_url is 'A/AN/ANDK/CPAN-2.16.tar.gz' name is CPAN, version is 2.16 --
+# Fetch https://st.aticpan.org/source/ANDK/CPAN-2.16/distroprefs/01.DISABLED.yml
+
+package cpan_wrapper {
+    use CPAN;           # Must be inside a module, not the main program, because we don't want to *run* cpan!
+    sub version {
+        return $CPAN::VERSION;
+    }
+};
+
+use YAML;
+
+sub disable {
+    my ($self, $source) = @_;
+
+    # Load a local or remote copy of a regex which will be applied against the list of modules,
+    # to disable (or enable) them.
+
+    # If no source specified, load default remote file
+    my $source_url = Mojo::URL->new($source // 'https://st.aticpan.org/');
+    my $disabled_list;
+    my ($priority, $author, $version, $reason);
+
+    if ($source_url->protocol || $source_url->host) {
+        # Remote file
+
+        my $module = $self->app->db->query('SELECT * FROM modules WHERE NAME=? ORDER BY added DESC LIMIT 1',
+                                           'CPAN');
+        return undef unless defined $module;
+        $module = $module->hashes->first;
+        return undef unless defined $module;
+        ($author, $version) = @{$module}{qw(author version)};
+
+        if ($version ne cpan_wrapper::version()) {
+            warn "Our cpan=$CPAN::VERSION but remote is $version";
+        }
+
+        unless (length($source_url->path) > 1) { # no path, or '/'
+            push @{$source_url->path->parts}, ( 'source',
+                                                $author,
+                                                'CPAN-' . $version,
+                                                'distroprefs',
+                                                '01.DISABLED.yml'
+                                              );
+        }
+        $reason = "${author}/CPAN-${version}";
+        my $ua = Mojo::UserAgent->new();
+        $disabled_list = $ua->get($source_url)->result;
+        die "Can't download disabled list: ".$disabled_list->message
+        unless $disabled_list->is_success;
+        $disabled_list = $disabled_list->body;
+        $priority = 100;        # Default for remote file
+    } else {
+        # Local file
+        $reason = $source;
+        $priority = 50;         # Default for local
+        $disabled_list = Mojo::File->new( $source)->slurp;
+        die "No module list file" unless length($disabled_list);
+    }
+
+    my $matchfile = YAML::Load($disabled_list);
+        
+    # save as meta-information in the Modules list
+    my $saved = $self->app->db->query('INSERT OR REPLACE INTO module_flags (priority, origin, author, disable, regex) '.
+                                      'VALUES (?,?,?,?,?)',
+                                      $priority, $reason, $author, $matchfile->{disabled}, $matchfile->{match}{distribution}
+                                     );
+        
+    1;
+
+}
+
+sub apply {
+    my ($self) = @_;
+
+
+    # For each available enable/list, apply in priority order
+    # .. For each module:
+
+        # foreach (...) {
+        #     if ( $module =~ $dist_regex ) {
+        #         # Disable (or enable, if disabled=0 in matchfile)
+        #         ... = $matchfile->{disabled};
+        #         UPDATE modules SET disabled_by = $reason
+        #     }
+        # }
+
+        
+}
+
+################################################################
+################################################################
+################################################################
+
+package main::Command::update {
+    use Mojo::Base 'Mojolicious::Command';
+
+    ################ currently unused
+
+    # use Date::Parse;
+
+    # sub _html_extract {
+    #     my $module_node = shift;  # DOM node
+
+    #     my $module_url = $module_node->attr('href');
+    #     # ; $DB::single=1;
+    #     my $module_info_text = $module_node->next_node; #->content =~ s/\A\s+//r;
+    #     my ($m_size, $m_day, $m_mon, $m_year, $m_extra) = split(/\s+/, $module_info_text, 5);
+    #     my $m_date = str2time(join('-', $m_day, $m_mon, $m_year));
+
+    #     # # Convert units:
+    #     $m_size =~ s/^([0-9.])+([kM])/$1*({k=>1024,M=>1024*1024}->{$2})/e;
+    #     my ($m_name, $m_version) =
+    #         $module_node->text =~ m/(.+?)-?v?([0-9a-z.]+)\.tar.gz/i;
+    #     $m_name =~ s/-/::/g;
+    #     my ($m_young, $m_category) = $m_extra =~ m/\s*(\+?)\s*(\w+)/;
+
+    #     return {name => $m_name, category => $m_category,
+    #             url => $module_url, version => $m_version,
+    #             last_updated => $m_date, size => $m_size,
+    #            };
+    # }
+
+    sub run {
+        return ::update(@_);
+    }
+};
+
+################################################################
+
+package main::Command::disable {
+    use Mojo::Base 'Mojolicious::Command';
+
+    sub run {
+
+        return ::disable(@_);
+    }
+
+};
+
+################################################################
+
+# Apply the enable/disable list(s)
+#
+
+package main::Command::apply {
+    use Mojo::Base 'Mojolicious::Command';
+
+    sub run {
+        my ($self, @selected_modules) = @_;
+
+        return ::apply(@_);
+    }
+}
+
+################################################################
+
+# Create Test jobs for one module, or for all enabled modules
+#
+
+package main::Command::create {
+    use Mojo::Base 'Mojolicious::Command';
+
+    sub run {
+        my ($self, @selected_modules) = @_;
+
+        
+    }
+    
+}
+
+################################################################
+################################################################
+################################################################
+
+package Smoker::Database {
+
+    use Mojo::Base -base;
+    use Mojo::File;
+
+    use Mojo::SQLite;
+    # use Mojo::Pg;         # Alternate databases possible via connection string
+
+    use SQL::Abstract::More;
+
+    has 'database';
+    has 'rebuild';     # Flag to rebuild database.  Useful for debugging or reprovisioning
+    has 'sql' => sub { # Set during instantiation; or, create object
+        my ($self) = @_;
+        if (defined $self->database) {
+            Mojo::SQLite->new('sqlite:' . $self->database);
+        }
+    };
+
+    sub new {
+        my $class = shift;
+        my $self = $class->SUPER::new(@_);
+
+        $self->sql->abstract(SQL::Abstract::More->new());
+
+        $self->sql->migrations->name('smoker_migrations')->from_data('main', 'sqlite_migrations');
+
+        $self->sql->migrations->tap(sub { $self->rebuild and $_->migrate(0) })->migrate;
+        my $jmode = $self->sql->db->query('PRAGMA journal_mode=WAL;');
+        if ($jmode->arrays->[0]->[0] ne 'wal') {
+            warn 'Note: Write-ahead mode not enabled';
+        }
+        
+        return $self;
+    }
+
+    # sub _pick {
+    #     # Similar to the hash slice, » $hash->%{@elements} « but only picks defined entries
+    #     my ($hash, @elements) = @_;
+    #     return map { exists $hash->{$_} ? ( $_, $hash->{$_} ) : () } @elements;
+    # }
+
+};
+
+push @{app->commands->namespaces}, 'main::Command';
+
+my $dbname = 'testers.db';
+
+plugin 'Minion' => { SQLite => 'sqlite:'.$dbname };
+
+helper db => sub {
+    my ($self) = @_;
+    state $db = Smoker::Database->new(database => $dbname, rebuild => ($self->app->mode eq 'rebuild'))->sql->db;
+};
+
+################
+
+get '/modules' => sub {
+    my $self = shift;
+
+    my $result = eval { $self->db->query('SELECT COUNT(*) AS count FROM modules')->hashes->first; };
+    if (defined $result) {
+        $self->render(json => $result);
+    } else {
+        $self->render(json => {error => 'Database not configured or not populated'});
+    }
+};
+
+get '/module/:modname' => sub {
+    my $self = shift;
+
+    my $result = eval { $self->db->query('SELECT * FROM modules WHERE name=?', $self->stash('modname'))->hashes->first; };
+    if (defined $result) {
+        $self->render(json => $result);
+    } else {
+        $self->render(json => {error => 'Module not found'});
+    }
+};
+
+get '/tests/:modname' => sub {
+    my $self = shift;
+
+    my $result = eval { $self->db->query('SELECT * FROM tests WHERE module_id=(SELECT id FROM modules WHERE name=?)',
+                                         $self->stash('modname'))->hashes; };
+    if (defined $result) {
+        $self->render(json => $result);
+    } else {
+        $self->render(json => {error => 'No tests have been run, or Module not found'});
+    }
+};
+
+get '/update' => sub {
+    my ($self) = @_;
+    my $id = $self->app->minion->enqueue('update', {priority => 0});
+    $self->render(json => {job => {task => 'update', id => $id}});
+};
+
+get '/update/*uri' => sub {
+    my ($self) = @_;
+    my $id = $self->app->minion->enqueue('update' => [$self->stash('uri')], {priority => 0});
+    $self->render(json => {job => {task => 'update', id => $id}});
+};
+
+get '/apply' => sub {
+    my ($self) = @_;
+    my $id = $self->app->minion->enqueue('apply', {priority => 0});
+    $self->render(json => {job => {task => 'apply', id => $id}});
+};
+
+get '/job/:id' => sub {
+    my ($self) = @_;
+    my $job = $self->app->minion->job($self->stash('id'));
+    $self->render(json => $job->info);
+};
+
+del '/job/:id' => sub {
+    my ($self) = @_;
+    my $deleted = $self->app->minion->job($self->stash('id'))->remove;
+    $self->render(json => {success => $deleted});
+};
+
+get '/jobs/stats' => sub {
+    my ($self) = @_;
+    my $stats = $self->app->minion->stats;
+    $self->render(json => $stats);
+};
+
+app->minion->add_task( update => sub { my ($job, @args) = @_;
+                                       update( $job->app, @args);
+                                       # probably call $job->finished($message) or $job->fail($message)
+                                   } );
+
+app->minion->add_task( apply => sub { my ($job, @args) = @_;
+                                      apply( $job->app, @args);
+                                      # probably call $job->finished($message) or $job->fail($message)
+                                   } );
+
+app->start;
+
+__DATA__
+
+@@sqlite_migrations
+
+-- TABLE: Module
+--  ModuleNum		0001				// Unique record number 
+--  Author		BLACKJ				// module author
+--  OptionalDir						// sometimes there is an extra dir in module path name
+--  ModuleName		Acme-BLACKJ-Utils		// module name
+
+-- TABLE: TestStatus
+--  ModuleNum		0001				// FOREIGN KEY(Module) References Module(ModuleNum)
+--  Error			Module not found|Disk Error...	// Misc. errors
+--  BuildLog		Complete|Incomplete|Absent|Null|Pending	// created by cpanm --test-only 
+
+--  BuildLogPath		smoke/.cpanm/perl-5.24.0/work/1234567890.12345/build.log 
+--  BuildLogResult	Pass|Fail|Other
+--  Revision		0.01				// module revision number
+--  DisabledBy		ANDK|None			// ANDK = Testing disabled by this CPAN ID 
+--							// [ANDK, BLUEWIND, current tester ID, etc.]
+--							// None = Testing is enabled
+--  PerlBuild		5.20.3-thread-debug		// module tested under this Perl build revision
+--  TestDate		1496440070			// epoch date and time of test
+--  TestDuration		83				// in seconds
+--  CpanmReport		Complete|Incomplete|Absent	// created by cpanm-remporter
+--  CpanmReportPath	smoke/.cpanmreporter/offline/sync/pass.Acme-BLACKJ-Utils_0.01.x86_64-linux-gnu-thread-multi.3.13.0-79-generic.[epoch].rpt]
+--  CpanmReportSent	Yes|No|Unknown
+--  ScriptName		Smoker.pl			// Perl script carrying out test
+--  ScriptRevision	0.30				// test script revision
+--  ScriptDate		1496300070			// epoch time of test script revision
+--
+-- -- -- --
+
+-- 1 down
+
+DROP TABLE IF EXISTS modules;
+DROP INDEX IF EXISTS module_idx;
+DROP TABLE IF EXISTS module_flags;
+DROP INDEX IF EXISTS module_flags_idx;
+DROP TABLE IF EXISTS tests;
+
+-- 1 up
+
+CREATE TABLE modules (
+                      id INTEGER PRIMARY KEY,
+                      name TEXT,
+                      version TEXT,
+                      author TEXT,
+                      relative_url TEXT,
+                      disabled_by TEXT,
+                      added TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+
+CREATE UNIQUE INDEX module_idx ON modules (name, version);
+
+CREATE TABLE module_flags (
+                           id INTEGER PRIMARY KEY,
+                           priority INTEGER, -- lower values take higher precedence
+                           disable  INTEGER, -- enable (0) or disable (1) the modules in the regex
+                           origin TEXT,  -- URL or filename
+                           regex  TEXT,  -- Regular expression to match module names against
+                           author TEXT,
+                           added TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                          );
+
+CREATE UNIQUE INDEX module_flags_idx ON module_flags (origin);
+
+CREATE TABLE tests (
+                    id INTEGER PRIMARY KEY,
+                    module_id INTEGER,
+                    error TEXT,
+                    revision TEXT,
+                    perl_build TEXT,
+                    test_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    test_duration INT,
+                    build_log TEXT,
+                    build_log_result TEXT,
+                    cpanm_report TEXT,
+                    cpanm_report_sent TIMESTAMP,
+                    script_name TEXT,
+                    script_revision TEXT,    -- from CPAN
+                    script_date TIMESTAMP,   -- from CPAN
+                    FOREIGN KEY(module_id) REFERENCES modules(id)
+);
+
