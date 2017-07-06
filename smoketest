@@ -31,6 +31,8 @@ sub _text_extract {
 
 # use Date::Parse;
 
+my %months = (jan=>1,feb=>2,mar=>3,apr=>4,may=>5,jun=>6,jul=>7,aug=>8,sep=>9,oct=>10,nov=>11,dec=>12);
+
 sub _dom_extract {
     my $module_tgzs = shift;
 
@@ -47,7 +49,8 @@ sub _dom_extract {
                             my $module_info_text = $module_node->next_node->content =~ s/\A\s+//r =~ s/\s+\z//r;
                             ($module_info->{size}, my $m_day, my $m_mon, my $m_year) = split(/\s+/, $module_info_text, 4);
                             $module_info->{size} =~ s/^([0-9.])+([kM])/$1*({k=>1024,M=>1024*1024}->{$2})/e;  # Convert human units to octets
-                            $module_info->{date} = join('-', $m_day, $m_mon, $m_year);   # with Date::Parse, do str2time() of that for epoch timestamp
+                            # use Date::Parse and do str2time() of date for epoch timestamp, or simply put into format SQLite understands:
+                            $module_info->{released} = sprintf('%4d-%02d-%02d', $m_year, $months{lc($m_mon)}, $m_day);
                             push @modules, $module_info;
                         } );
     return Mojo::Collection->new(@modules);
@@ -101,9 +104,9 @@ sub update {
                                              );
     }
     $module_tgzs->each(sub { $self->app->db
-                             ->query('INSERT OR REPLACE INTO modules(name, version, author, relative_url) '.
-                                     'VALUES (?,?,?,?)',
-                                     $_->{name}, $_->{version}, $_->{author}, $_->{relative_url});
+                             ->query('INSERT OR REPLACE INTO modules(name, version, released, author, relative_url) '.
+                                     'VALUES (?,?,?,?,?)',
+                                     $_->{name}, $_->{version}, $_->{released}, $_->{author}, $_->{relative_url});
                          });
     return $module_tgzs->size;
 }
@@ -124,10 +127,17 @@ sub enable_recent {
 
     # Create a list of modules
     my $modules = _dom_extract($module_dom->find('a[href$=".tar.gz"]'));
+
+    $modules->each(sub { $self->app->db
+                         ->query('INSERT OR REPLACE INTO modules(name, version, released, author, relative_url) '.
+                                 'VALUES (?,?,?,?,?)',
+                                 $_->{name}, $_->{version}, $_->{released}, $_->{author}, $_->{relative_url});
+                     });
+
     # Convert list to a regex which selects exactly those modules
     my $regex = "^(?x:\n.^  # never matches, only purpose is to let things align nicely\n" .
       '    # Recent modules list from ' . $source_url . "\n    |".
-      $modules->map( sub { $_->{name} . '  # Version ' . $_->{version} . '  ' . $_->{date} })->join("\n   |")     
+      $modules->map( sub { $_->{name} . '  # Version ' . $_->{version} . '  ' . $_->{released} })->join("\n   |")     
       . "\n)";
     # Save regex in module_flags table
     my $saved = $self->app->db->query('INSERT OR REPLACE INTO module_flags (priority, origin, author, disable, regex) '.
@@ -508,6 +518,7 @@ CREATE TABLE modules (
                       id INTEGER PRIMARY KEY,
                       name TEXT,
                       version TEXT,
+                      released TIMESTAMP,  -- version timestamp
                       author TEXT,
                       relative_url TEXT,
                       disabled_by TEXT,
