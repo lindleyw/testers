@@ -29,6 +29,30 @@ sub _text_extract {
     return $vals;
 }
 
+# use Date::Parse;
+
+sub _dom_extract {
+    my $module_tgzs = shift;
+
+    my @modules;
+    $module_tgzs->each( sub {
+                            my $module_node = shift;
+                            my $module_info = {};
+                            @{$module_info}{qw(author name version)} = ( $module_node->attr('href') =~   # from the URL,
+                                                                           m{(\w+)/([^/]+?)-?v?([0-9a-z.]+)?\.tar\.gz}
+                                                                         );  # Extract into hash slice
+                            $module_info->{name} =~ s/-/::/g;
+
+                            # Extract content and remove any leading whitespace
+                            my $module_info_text = $module_node->next_node->content =~ s/\A\s+//r =~ s/\s+\z//r;
+                            ($module_info->{size}, my $m_day, my $m_mon, my $m_year) = split(/\s+/, $module_info_text, 4);
+                            $module_info->{size} =~ s/^([0-9.])+([kM])/$1*({k=>1024,M=>1024*1024}->{$2})/e;  # Convert human units to octets
+                            $module_info->{date} = join('-', $m_day, $m_mon, $m_year);   # with Date::Parse, do str2time() of that for epoch timestamp
+                            push @modules, $module_info;
+                        } );
+    return Mojo::Collection->new(@modules);
+}
+
 sub update {
     my ($self, $source) = @_;
 
@@ -36,7 +60,8 @@ sub update {
     my $module_dom;
 
     # If no source specified, load default remote module list
-    my $source_url = Mojo::URL->new($source // 'http://cpan.cpantesters.org/');
+    my $source_url = Mojo::URL->new($source // $self->app->config->{cpan_testers});
+    # 'http://cpan.cpantesters.org/');
 
     if ($source_url->protocol || $source_url->host) {
         # Remote file
@@ -59,18 +84,22 @@ sub update {
     }
 
     my $module_tgzs;
-    # Note: Follows header/body convention as SMTP message
-    my $header = 1;
-    $module_tgzs = Mojo::Collection->new (
-                                          map {
-                                              if ($header) {
-                                                  $header = $_ !~ /^$/;  # false once we reach blank line
-                                                  ();                    # and skip this
-                                              } else {
-                                                  _text_extract($_);
-                                              }
-                                          } ( split (/\n/, $module_list ) )
-                                         );
+    if (defined $module_dom) {
+        $module_tgzs = _dom_extract($module_dom->find('a[href$=".tar.gz"]'));
+    } else {
+        # Extract from text file, skipping header, with header/body as SMTP message
+        my $header = 1;
+        $module_tgzs = Mojo::Collection->new (
+                                              map {
+                                                  if ($header) {
+                                                      $header = $_ !~ /^$/;  # false once we reach blank line
+                                                      ();                    # and skip this
+                                                  } else {
+                                                      _text_extract($_);
+                                                  }
+                                              } ( split (/\n/, $module_list ) )
+                                             );
+    }
     $module_tgzs->each(sub { $self->app->db
                              ->query('INSERT OR REPLACE INTO modules(name, version, author, relative_url) '.
                                      'VALUES (?,?,?,?)',
@@ -78,6 +107,38 @@ sub update {
                          });
     return $module_tgzs->size;
 }
+
+################################################################
+
+sub enable_recent {
+    # Get the list of most recently updated modules from source; default to
+    # http://cpan.cpantesters.org/modules/01modules.mtime.html
+    my ($self, $info, $source) = @_;
+
+    my $source_url = Mojo::URL->new($source // $self->app->config->{cpan_testers} );
+                                    # 'http://cpan.cpantesters.org/');
+    push @{$source_url->path->parts}, 'modules', '01modules.mtime.html';
+
+    my $ua = Mojo::UserAgent->new();
+    my $module_dom = $ua->get($source_url)->result->dom;
+
+    # Create a list of modules
+    my $modules = _dom_extract($module_dom->find('a[href$=".tar.gz"]'));
+    # Convert list to a regex which selects exactly those modules
+    my $regex = "^(?x:\n.^  # never matches, only purpose is to let things align nicely\n" .
+      '    # Recent modules list from ' . $source_url . "\n    |".
+      $modules->map( sub { $_->{name} . '  # Version ' . $_->{version} . '  ' . $_->{date} })->join("\n   |")     
+      . "\n)";
+    # Save regex in module_flags table
+    my $saved = $self->app->db->query('INSERT OR REPLACE INTO module_flags (priority, origin, author, disable, regex) '.
+                                      'VALUES (?,?,?,?,?)',
+                                      $info->{priority}, $info->{reason}, $info->{author}, $info->{disabled} // 0, $regex
+                                     );
+    return 1;
+    
+}
+
+################################################################
 
 # Find CPAN in the list of modules (it's currently under ANDK's directory)
 # Get the current revision's list of disabled modules and use that to refresh the disabled list
@@ -101,7 +162,7 @@ sub disable {
     # to disable (or enable) them.
 
     # If no source specified, load default remote file
-    my $source_url = Mojo::URL->new($source // 'https://st.aticpan.org/');
+    my $source_url = Mojo::URL->new($source // $self->app->config->{cpan_source});
     my $disabled_list;
     my ($priority, $author, $version, $reason);
 
@@ -119,13 +180,13 @@ sub disable {
             warn "Our cpan=$CPAN::VERSION but remote is $version";
         }
 
-        unless (length($source_url->path) > 1) { # no path, or '/'
-            push @{$source_url->path->parts}, ( 'source',
-                                                $author,
+        unless ($source_url->path  =~ /\.\w+/) { # If just a path, without a filename+extension: use default
+            push @{$source_url->path->parts}, ( $author,
                                                 'CPAN-' . $version,
                                                 'distroprefs',
                                                 '01.DISABLED.yml'
                                               );
+            $source_url->path->trailing_slash(0);
         }
         $reason = "${author}/CPAN-${version}";
         my $ua = Mojo::UserAgent->new();
@@ -159,6 +220,26 @@ sub apply {
 
 
     # For each available enable/list, apply in priority order
+    my $regex_list = $self->app->db->query('SELECT * FROM module_flags ORDER BY priority DESC, added DESC');
+    return undef unless defined $regex_list;
+    my $regexes = Mojo::Collection->new($regex_list->hashes);
+    
+    # TODO: Can we use the "Recent" list as an Enabled list?
+    # And then for example, apply "disable .*" and then "enable the recent modules" and then apply the disabled lists?
+
+    # TODO: Put the above recipe in the config file
+
+
+    # TODO:  Possibly create a job list as follows
+    #   - disable all modules
+    #   - enable a few modules:
+    #       - the most recent modules (according to CPAN)
+    #       - (or) all modules with 'added' timestamp less than 'x'
+    #         seconds ago in our database
+    #   - disable according to CPAN globally
+    #   - disable according to a local file
+    #   - disable any module we have tested less than 'y' seconds ago
+
     # .. For each module:
 
         # foreach (...) {
@@ -179,33 +260,8 @@ sub apply {
 package main::Command::update {
     use Mojo::Base 'Mojolicious::Command';
 
-    ################ currently unused
-
-    # use Date::Parse;
-
-    # sub _html_extract {
-    #     my $module_node = shift;  # DOM node
-
-    #     my $module_url = $module_node->attr('href');
-    #     # ; $DB::single=1;
-    #     my $module_info_text = $module_node->next_node; #->content =~ s/\A\s+//r;
-    #     my ($m_size, $m_day, $m_mon, $m_year, $m_extra) = split(/\s+/, $module_info_text, 5);
-    #     my $m_date = str2time(join('-', $m_day, $m_mon, $m_year));
-
-    #     # # Convert units:
-    #     $m_size =~ s/^([0-9.])+([kM])/$1*({k=>1024,M=>1024*1024}->{$2})/e;
-    #     my ($m_name, $m_version) =
-    #         $module_node->text =~ m/(.+?)-?v?([0-9a-z.]+)\.tar.gz/i;
-    #     $m_name =~ s/-/::/g;
-    #     my ($m_young, $m_category) = $m_extra =~ m/\s*(\+?)\s*(\w+)/;
-
-    #     return {name => $m_name, category => $m_category,
-    #             url => $module_url, version => $m_version,
-    #             last_updated => $m_date, size => $m_size,
-    #            };
-    # }
-
     sub run {
+        # ; my ($self) = @_; use Data::Dumper; print STDERR Dumper($self->app->config);
         return ::update(@_);
     }
 };
@@ -220,6 +276,16 @@ package main::Command::disable {
         return ::disable(@_);
     }
 
+};
+
+################################################################
+
+package main::Command::enable_recent {
+    use Mojo::Base 'Mojolicious::Command';
+
+    sub run {
+        return ::enable_recent(@_);
+    }
 };
 
 ################################################################
@@ -303,13 +369,12 @@ package Smoker::Database {
 
 push @{app->commands->namespaces}, 'main::Command';
 
-my $dbname = 'testers.db';
-
-plugin 'Minion' => { SQLite => 'sqlite:'.$dbname };
+plugin 'Config';
+plugin 'Minion' => { SQLite => 'sqlite:'.app->config->{dbname} };
 
 helper db => sub {
     my ($self) = @_;
-    state $db = Smoker::Database->new(database => $dbname, rebuild => ($self->app->mode eq 'rebuild'))->sql->db;
+    state $db = Smoker::Database->new(database => $self->config->{dbname}, rebuild => ($self->app->mode eq 'rebuild'))->sql->db;
 };
 
 ################
@@ -451,33 +516,48 @@ CREATE TABLE modules (
 
 CREATE UNIQUE INDEX module_idx ON modules (name, version);
 
+-- For storing the complex regexps that will be applied to module names,
+-- thereby determining which modules are enabled and disabled.
+
 CREATE TABLE module_flags (
                            id INTEGER PRIMARY KEY,
                            priority INTEGER, -- lower values take higher precedence
                            disable  INTEGER, -- enable (0) or disable (1) the modules in the regex
                            origin TEXT,  -- URL or filename
                            regex  TEXT,  -- Regular expression to match module names against
-                           author TEXT,
+                           author TEXT,  -- PAUSE identifier
                            added TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                           );
 
 CREATE UNIQUE INDEX module_flags_idx ON module_flags (origin);
 
+CREATE TABLE environments (
+                           id INTEGER PRIMARY KEY,
+                           host TEXT,         -- Hostname (preferably full name; 'localhost' is less helpful)
+                           -- These (platform, perl, osname, osvers) match fields in Testers Metabase
+                           -- See https://github.com/barbie/cpan-testers-data-generator/
+                           platform   TEXT,   
+                           perl       TEXT,   -- Perl version
+                           osname     TEXT,   --
+                           osvers     TEXT,   --
+                           added TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                           );
+
 CREATE TABLE tests (
                     id INTEGER PRIMARY KEY,
-                    module_id INTEGER,
-                    error TEXT,
-                    revision TEXT,
-                    perl_build TEXT,
-                    test_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    test_duration INT,
-                    build_log TEXT,
-                    build_log_result TEXT,
-                    cpanm_report TEXT,
+                    module_id INTEGER,        -- UUT [unit under test]
+                    version TEXT,             -- Version number as tested
+                    error TEXT,               -- Last or most-severe error encountered
+                    environment_id INTEGER,   -- replaces perl_build
+                    test_started TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- when testing began (was enqueued)
+                    test_finished TIMESTAMP,  -- replaces test_duration
+                    build_log TEXT,           -- the complete build log
+                    build_log_result TEXT,    -- parsed from the build log
+                    cpanm_report TEXT,        -- as submitted
                     cpanm_report_sent TIMESTAMP,
-                    script_name TEXT,
-                    script_revision TEXT,    -- from CPAN
-                    script_date TIMESTAMP,   -- from CPAN
-                    FOREIGN KEY(module_id) REFERENCES modules(id)
+                    -- script_name TEXT,
+                    -- script_revision TEXT,    -- from CPAN
+                    -- script_date TIMESTAMP,   -- from CPAN
+                    FOREIGN KEY(module_id) REFERENCES modules(id),
+                    FOREIGN KEY(environment_id) REFERENCES environments(id)
 );
-
