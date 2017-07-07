@@ -9,15 +9,11 @@ which is performed and controlled by the Minion job queue.
 To begin, build a database and download the list of packages from
 CPAN:
 
-    $ perl smoketest update -m rebuild
+    $ perl smoketest update --rebuild
 
 Example use from a locally saved copy of the package list:
 
-    $ perl smoketest update ~/Documents/02packages.details.txt -m rebuild
-
-TODO: More properly use a command-line switch:
-
-    $ perl smoketest update --rebuild
+    $ perl smoketest update ~/Documents/02packages.details.txt --rebuild
 
 to rebuild and reload database from a local file, or:
 

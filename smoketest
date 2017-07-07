@@ -2,6 +2,7 @@
 
 use Mojolicious::Lite;
 
+use Mojo::Util qw(getopt);
 use Mojo::URL;
 use Mojo::File;
 use Mojo::UserAgent;
@@ -379,12 +380,21 @@ package Smoker::Database {
 
 push @{app->commands->namespaces}, 'main::Command';
 
+getopt
+'d|database=s'    => \my $db_name,
+'r|rebuild'   => \my $rebuild,
+#'v|verbose'   => \my $verbose,
+;
+
 plugin 'Config';
-plugin 'Minion' => { SQLite => 'sqlite:'.app->config->{dbname} };
+
+app->config('dbname', $db_name) if defined $db_name;
+
+plugin 'Minion' => { SQLite => 'sqlite:'. app->config->{dbname} };
 
 helper db => sub {
     my ($self) = @_;
-    state $db = Smoker::Database->new(database => $self->config->{dbname}, rebuild => ($self->app->mode eq 'rebuild'))->sql->db;
+    state $db = Smoker::Database->new(database => $self->config->{dbname}, rebuild => $rebuild)->sql->db;
 };
 
 ################
