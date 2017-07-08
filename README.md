@@ -3,6 +3,16 @@ A rewrite of Ray's Perl Smoker Testers program
 
 See https://github.com/raytestinger/testers
 
+Purpose: To run tests on modules that are newly updated in CPAN
+(or any other desired set of modules).
+
+The results may be stored locally or transmitted to the CPAN testers,
+from which they may be viewed.  Further information on accessing test
+results:
+
+http://blogs.perl.org/users/preaction/2017/07/cpan-testers-has-an-api.html
+
+
 This uses Mojo and Minion to divide the testing into steps, each of
 which is performed and controlled by the Minion job queue.
 
