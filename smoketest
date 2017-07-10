@@ -7,6 +7,7 @@ use Mojo::URL;
 use Mojo::File;
 use Mojo::UserAgent;
 use Mojo::DOM;
+use List::Util qw(pairs);
 use v5.22;
 use strict;
 use warnings;
@@ -70,7 +71,7 @@ sub update {
     if ($source_url->protocol || $source_url->host) {  # Remote file
         unless (length($source_url->path) > 1) {       # no path, or '/'
             push @{$source_url->path->parts}, ( 'modules',
-                                                # '01modules.index.html'
+                                                $self->app->config->{cpan_modules} //
                                                 '02packages.details.txt'
                                               );
         }
@@ -122,7 +123,9 @@ sub enable_recent {
     my ($self, $info, $source) = @_;
 
     my $source_url = Mojo::URL->new($source // $self->app->config->{cpan_testers} );
-    push @{$source_url->path->parts}, 'modules', '01modules.mtime.html';
+    push @{$source_url->path->parts},
+         'modules',
+         $self->app->config->{cpan_recent} // '01modules.mtime.html';
 
     my $ua = Mojo::UserAgent->new();
     my $module_dom = $ua->get($source_url)->result->dom;
@@ -195,6 +198,7 @@ sub disable {
             push @{$source_url->path->parts}, ( $author,
                                                 'CPAN-' . $version,
                                                 'distroprefs',
+                                                $self->app->config->{cpan_disable} //
                                                 '01.DISABLED.yml'
                                               );
             $source_url->path->trailing_slash(0);
@@ -278,34 +282,12 @@ sub _find_recent {
 # TODO: api for selecting the number of modules added on a given date
 # sqlite> select date(added), count(added) from modules group by date(added);
 
-
-sub apply {
-    my ($self) = @_;
-
-    ; $DB::single = 1;
-
-    # For each available enable/list, apply in priority order
+sub _apply_regex {
+    my ($self) = @_; 
+    # For each available enable/disable list, prepare to apply in priority order
     my $regex_list = $self->app->db->query('SELECT * FROM module_flags ORDER BY priority DESC, added DESC');
     return undef unless defined $regex_list;
     my $regexes = Mojo::Collection->new($regex_list->hashes);
-    
-    # TODO: How do we choose the Perl version?
-
-    # TODO: Can we use the "Recent" list as an Enabled list?
-    # And then for example, apply "disable .*" and then "enable the recent modules" and then apply the disabled lists?
-
-    # TODO: Put the above recipe in the config file
-
-
-    # TODO:  Possibly create a job list as follows
-    #   - disable all modules
-    #   - enable a few modules:
-    #       - the most recent modules (according to CPAN)
-    #       - (or) all modules with 'added' timestamp less than 'x'
-    #         seconds ago in our database
-    #   - disable according to CPAN globally
-    #   - disable according to a local file
-    #   - disable any module we have tested less than 'y' seconds ago
 
     # .. For each module:
     # .... Apply each filter against the module's name and add/modify date, remembering filter names that cause disabling
@@ -318,7 +300,59 @@ sub apply {
         #     }
         # }
 
-        
+}
+
+package TestSet {
+    use Mojo::Base -base;
+
+    has selected => sub { [] };
+    has 'db';
+    has 'config';
+
+    sub cpan_recent {
+        # ; $DB::single = 1;
+        my ($self, @args) = @_;
+    }
+
+    sub cpan_disabled {
+        my ($self, @args) = @_;
+    }
+
+    sub yaml_regex {
+        my ($self, @args) = @_;
+    }
+
+    sub released {
+        my ($self, @args) = @_;
+    }
+
+    sub tested {
+        my ($self, @args) = @_;
+    }
+};
+
+sub apply {
+    my ($self, $recipe_name) = @_;
+
+    my @recipe_steps = eval { @{$self->app->config->{apply}->
+                                  {$recipe_name // 'recent'} }
+                              };
+
+    # TODO: How do we choose the Perl version?
+
+    # XXX: what parameters to actually pass?
+    my $module_group = TestSet->new( db => $self->app->db,
+                                     config => $self->app->config );
+
+    foreach my $step (pairs( @recipe_steps)) {
+        my ( $action, $args ) = @$step;
+        if ($module_group->can($action)) {
+            # Array refs [] get expanded to ordinary argument list; else verbatim
+            $module_group->$action(ref $args eq 'ARRAY' ? @{$args} : $args);
+            # TODO: Need to handle errors and bail out
+        }
+    }
+    # use $module_group->selected() ...?
 }
 
 ################################################################
@@ -430,6 +464,8 @@ package Smoker::Database {
 };
 
 push @{app->commands->namespaces}, 'main::Command';
+
+# XXX: Can't call getopt before minion's option processing, but how do we override rebuild and database= ?
 
 getopt
 'd|database=s'    => \my $db_name,
