@@ -20,103 +20,6 @@ use warnings;
 #   $ perl smoketest update
 # to update from the default CPAN location (remote URL)
 
-sub _text_extract {
-    my ($module_text) = @_;
-        
-    my $vals = {}; # populate with a hash slice:
-    @{$vals}{qw(name version relative_url)} = split /\s+/, $module_text;
-    $vals->{author} = ($vals->{relative_url} =~ m{^./../(\w+)/})[0];
-    $vals->{version} = undef if ($vals->{version} eq 'undef');      # Replace text 'undef'
-    return $vals;
-}
-
-{
-    # use Date::Parse;
-    my %months = (jan=>1,feb=>2,mar=>3,apr=>4,may=>5,jun=>6,jul=>7,aug=>8,sep=>9,oct=>10,nov=>11,dec=>12);
-
-    sub _dom_extract {
-        my $module_tgzs = shift;
-
-        my @modules;
-        $module_tgzs->each( sub {
-                                my $module_node = shift;
-                                my $module_info = {};
-                                @{$module_info}{qw(author name version)} = ( $module_node->attr('href') =~   # from the URL,
-                                                                             m{(\w+)/([^/]+?)-?v?([0-9a-z.]+)?\.tar\.gz}
-                                                                           );  # Extract into hash slice
-                                $module_info->{name} =~ s/-/::/g;
-
-                                # Extract content and remove any leading whitespace
-                                my $module_info_text = $module_node->next_node->content =~ s/\A\s+//r =~ s/\s+\z//r;
-                                ($module_info->{size}, my $m_day, my $m_mon, my $m_year) = split(/\s+/, $module_info_text, 4);
-                                $module_info->{size} =~ s/^([0-9.])+([kM])/$1*({k=>1024,M=>1024*1024}->{$2})/e;  # Convert human units to octets
-                                # use Date::Parse and do str2time() of date for epoch timestamp, or simply put into format SQLite understands:
-                                $module_info->{released} = sprintf('%4d-%02d-%02d', $m_year, $months{lc($m_mon)}, $m_day);
-                                push @modules, $module_info;
-                            } );
-        return Mojo::Collection->new(@modules);
-    }
-
-} 
-
-sub update {
-    my ($self, $source) = @_;
-
-    my $module_list;
-    my $module_dom;
-
-    # If no source specified, load default remote module list
-    my $source_url = Mojo::URL->new($source // $self->app->config->{cpan_testers});
-
-    if ($source_url->protocol || $source_url->host) {  # Remote file
-        unless (length($source_url->path) > 1) {       # no path, or '/'
-            push @{$source_url->path->parts}, ( 'modules',
-                                                $self->app->config->{cpan_modules} //
-                                                '02packages.details.txt'
-                                              );
-        }
-        my $ua = Mojo::UserAgent->new();
-        $module_list = $ua->get($source_url)->result;
-        die "Can't download modules list: ".$module_list->message
-          unless $module_list->is_success;
-        if ($source_url->path =~ /\.htm/) {
-            $module_dom = $module_list->dom;
-        } else {
-            $module_list = $module_list->body;       # plaintext contents
-        }
-    } else {                                            # Local file
-        $module_list = Mojo::File->new( $source)->slurp;
-        die "No module list file" unless length($module_list);
-        $module_dom = Mojo::DOM->new($module_list) if ($module_list =~ /<html/i);
-    }
-
-    my $module_tgzs;
-    if (defined $module_dom) {
-        $module_tgzs = _dom_extract($module_dom->find('a[href$=".tar.gz"]'));
-    } else {
-        # Extract from text file, skipping header, with header/body as SMTP message
-        my $header = 1;
-        $module_tgzs = Mojo::Collection->new (
-                                              map {
-                                                  if ($header) {
-                                                      $header = $_ !~ /^$/;  # false once we reach blank line
-                                                      ();                    # and skip this
-                                                  } else {
-                                                      _text_extract($_);
-                                                  }
-                                              } ( split (/\n/, $module_list ) )
-                                             );
-    }
-    $module_tgzs->each(sub { $self->app->db
-                             ->query('INSERT OR REPLACE INTO modules(name, version, released, author, relative_url) '.
-                                     'VALUES (?,?,?,?,?)',
-                                     $_->{name}, $_->{version}, $_->{released}, $_->{author}, $_->{relative_url});
-                         });
-    return $module_tgzs->size;
-}
-
-################################################################
-
 sub enable_recent {
     # Get the list of most recently updated modules from source; default to
     # http://cpan.cpantesters.org/modules/01modules.mtime.html
@@ -302,12 +205,216 @@ sub _apply_regex {
 
 }
 
-package TestSet {
-    use Mojo::Base -base;
+################################################################
+################################################################
+################################################################
 
-    has selected => sub { [] };
-    has 'db';
+package Tester::Smoker {
+
+    use Mojo::Base -base;
+    use Mojo::File;
+
+    use Mojo::SQLite;
+
+    use SQL::Abstract::More;
+
+    has 'database';
+    has 'rebuild';     # Flag to rebuild database.  Useful for debugging or reprovisioning
+    has 'sql' => sub { # Set during instantiation; or, create object
+        my ($self) = @_;
+        if (defined $self->database) {
+            Mojo::SQLite->new('sqlite:' . $self->database);
+        }
+    };
     has 'config';
+
+    sub new {
+        my $class = shift;
+        my $self = $class->SUPER::new(@_);
+
+        $self->sql->abstract(SQL::Abstract::More->new());
+
+        $self->sql->migrations->name('smoker_migrations')->from_data('main', 'sqlite_migrations');
+
+        $self->sql->migrations->tap(sub { $self->rebuild and $_->migrate(0) })->migrate;
+        my $jmode = $self->sql->db->query('PRAGMA journal_mode=WAL;');
+        if ($jmode->arrays->[0]->[0] ne 'wal') {
+            warn 'Note: Write-ahead mode not enabled';
+        }
+        
+        return $self;
+    }
+
+    sub _text_extract {
+        my ($module_text) = @_;
+        
+        my $vals = {};          # populate with a hash slice:
+        @{$vals}{qw(name version relative_url)} = split /\s+/, $module_text;
+        $vals->{author} = ($vals->{relative_url} =~ m{^./../(\w+)/})[0];
+        $vals->{version} = undef if ($vals->{version} eq 'undef'); # Replace text 'undef'
+        return $vals;
+    }
+
+    # use Date::Parse;
+    my %months = (jan=>1,feb=>2,mar=>3,apr=>4,may=>5,jun=>6,jul=>7,aug=>8,sep=>9,oct=>10,nov=>11,dec=>12);
+
+    sub _dom_extract {
+        my $module_tgzs = shift;
+
+        my @modules;
+        $module_tgzs->each( sub {
+                                my $module_node = shift;
+                                my $module_info = {};
+                                @{$module_info}{qw(author name version)} = ( $module_node->attr('href') =~ # from the URL,
+                                                                             m{(\w+)/([^/]+?)-?v?([0-9a-z.]+)?\.tar\.gz}
+                                                                           ); # Extract into hash slice
+                                $module_info->{name} =~ s/-/::/g;
+
+                                # Extract content and remove any leading whitespace
+                                my $module_info_text = $module_node->next_node->content =~ s/\A\s+//r =~ s/\s+\z//r;
+                                ($module_info->{size}, my $m_day, my $m_mon, my $m_year) = split(/\s+/, $module_info_text, 4);
+                                # Convert human units to octets:
+                                $module_info->{size} =~ s/^([0-9.])+([kM])/$1*({k=>1024,M=>1024*1024}->{$2})/e;
+                                # use Date::Parse and do str2time() of
+                                # date for epoch timestamp, or simply
+                                # put into format SQLite understands:
+                                $module_info->{released} = sprintf('%4d-%02d-%02d', $m_year, $months{lc($m_mon)}, $m_day);
+                                push @modules, $module_info;
+                            } );
+        return Mojo::Collection->new(@modules);
+    }
+
+    sub update {
+        my ($self, $source) = @_;
+
+        my $module_list;
+        my $module_dom;
+
+        # If no source specified, load default remote module list
+        my $source_url = Mojo::URL->new($source // $self->config->{cpan_testers});
+
+        if ($source_url->protocol || $source_url->host) { # Remote file
+            unless (length($source_url->path) > 1) { # no path, or '/'
+                push @{$source_url->path->parts}, ( 'modules',
+                                                    $self->config->{cpan_modules} //
+                                                    '02packages.details.txt'
+                                                  );
+            }
+            my $ua = Mojo::UserAgent->new();
+            $module_list = $ua->get($source_url)->result;
+            die "Can't download modules list: ".$module_list->message
+                unless $module_list->is_success;
+            if ($source_url->path =~ /\.htm/) {
+                $module_dom = $module_list->dom;
+            } else {
+                $module_list = $module_list->body; # plaintext contents
+            }
+        } else {                # Local file
+            $module_list = Mojo::File->new( $source)->slurp;
+            die "No module list file" unless length($module_list);
+            $module_dom = Mojo::DOM->new($module_list) if ($module_list =~ /<html/i);
+        }
+
+        my $module_tgzs;
+        if (defined $module_dom) {
+            $module_tgzs = _dom_extract($module_dom->find('a[href$=".tar.gz"]'));
+        } else {
+            # Extract from text file, skipping header, with header/body as SMTP message
+            my $header = 1;
+            $module_tgzs = Mojo::Collection->new (
+                                                  map {
+                                                      if ($header) {
+                                                          $header = $_ !~ /^$/; # false once we reach blank line
+                                                          (); # and skip this
+                                                      } else {
+                                                          _text_extract($_);
+                                                      }
+                                                  } ( split (/\n/, $module_list ) )
+                                                 );
+        }
+        $module_tgzs->each(sub { $self->sql->db
+                                     ->query('INSERT OR REPLACE INTO modules(name, version, released, author, relative_url) '.
+                                             'VALUES (?,?,?,?,?)',
+                                             $_->{name}, $_->{version}, $_->{released}, $_->{author}, $_->{relative_url});
+                             });
+        return $module_tgzs->size;
+    }
+
+    ################################################################
+
+    sub apply {
+        my ($self, $recipe_name) = @_;
+
+        my @recipe_steps = eval { @{$self->config->{apply}->
+                                    {$recipe_name // 'recent'} }
+                              };
+
+        # TODO: How do we choose the Perl version?
+
+        foreach my $step (pairs( @recipe_steps)) {
+            my ( $action, $args ) = @$step;
+            if ($self->can($action)) {
+                # Array refs [] get expanded to ordinary argument list; else verbatim
+                # $module_group->$action(ref $args eq 'ARRAY' ? @{$args} : $args);
+                # TODO: Need to handle errors and bail out
+            }
+        }
+        # use $module_group->selected() ...?
+    }
+
+
+    ################
+    
+    sub _author {
+        # Returns empty list (which gets skipped in building list later) if no author, -or-
+        # {'term' => {'author' => 'JBERGER'}},  # single author passed
+        # {'or' => [{'term' => {'author' => 'PREACTION'}},
+        #           {'term' => {'author' => 'JBERGER'}}]}  # 'PREACTION,JBERGER' passed-in
+        my $author_list = shift;
+        return () unless defined $author_list;
+        return { term => { author => $author_list }} unless $author_list =~ /,/;
+        return { term => { or => [ map { { term => { author => $_ }} } split (',',$author_list) ] } };
+    }
+
+
+    sub metacpan_modules {
+        my ($self, @args) = @_;
+        # See also: https://github.com/metacpan/metacpan-api/blob/master/docs/API-docs.md
+        my $req = { 'size' => 200,
+                    'fields' => [qw(name version date provides author download_url main_module)],
+                    'filter' => {'and' => [ { term => {main_module => 'Zoidberg'} },
+                                            # {'term' => {'status' => 'latest'}},
+                                            # _author('JBERGER'),
+                                          ]},
+                    'query' => {'match_all' => {}},
+                    'sort' => {'date' => 'desc'},
+                  };
+
+        my $ua = Mojo::UserAgent->new();
+        my $source_url = 'https://fastapi.metacpan.org/v1/release';
+        my $modules = $ua->post($source_url => json => $req)->result;
+        my $module_list = defined ($modules) ? Mojo::JSON::decode_json($modules->body) : {};
+        my $hits = $module_list->{hits}->{hits};
+            ; $DB::single = 1;
+        foreach my $module (@{$hits}) {
+            # my $relative_url = Mojo::URL->new($module->{fields}->{download_url})->path;
+            # For now, save full URL instead of relative.
+
+            # print STDERR "bork";
+            # my $provides = $module->{fields}->{provides};
+            my $provides = $module->{fields}->{main_module};
+            foreach my $name (ref $provides ? @{$provides} : ($provides) ) {
+                print STDERR $module->{fields}->{name} . ' -> ' . $name ."\n";
+                $self->sql->db->query('INSERT OR REPLACE INTO modules(name, version, released, author, relative_url) '.
+                                      'VALUES (?,?,?,?,?)',
+                                      $name,
+                                      @{$module->{fields}}{qw(version date author download_url)});
+            }
+        }
+
+
+    }
+
 
     sub cpan_recent {
         # ; $DB::single = 1;
@@ -329,31 +436,9 @@ package TestSet {
     sub tested {
         my ($self, @args) = @_;
     }
+
+
 };
-
-sub apply {
-    my ($self, $recipe_name) = @_;
-
-    my @recipe_steps = eval { @{$self->app->config->{apply}->
-                                  {$recipe_name // 'recent'} }
-                              };
-
-    # TODO: How do we choose the Perl version?
-
-    # XXX: what parameters to actually pass?
-    my $module_group = TestSet->new( db => $self->app->db,
-                                     config => $self->app->config );
-
-    foreach my $step (pairs( @recipe_steps)) {
-        my ( $action, $args ) = @$step;
-        if ($module_group->can($action)) {
-            # Array refs [] get expanded to ordinary argument list; else verbatim
-            $module_group->$action(ref $args eq 'ARRAY' ? @{$args} : $args);
-            # TODO: Need to handle errors and bail out
-        }
-    }
-    # use $module_group->selected() ...?
-}
 
 ################################################################
 ################################################################
@@ -363,8 +448,9 @@ package main::Command::update {
     use Mojo::Base 'Mojolicious::Command';
 
     sub run {
-        # ; my ($self) = @_; use Data::Dumper; print STDERR Dumper($self->app->config);
-        return ::update(@_);
+        my ($self, @args) = @_;
+
+        return $self->app->smoker->update(@args);
     }
 };
 
@@ -374,8 +460,9 @@ package main::Command::disable {
     use Mojo::Base 'Mojolicious::Command';
 
     sub run {
+        my ($self, @args) = @_;
 
-        return ::disable(@_);
+        return $self->app->smoker->disable(@args);
     }
 
 };
@@ -386,7 +473,21 @@ package main::Command::enable_recent {
     use Mojo::Base 'Mojolicious::Command';
 
     sub run {
-        return ::enable_recent(@_);
+        my ($self, @args) = @_;
+
+        return $self->app->smoker->enable_recent(@args);
+    }
+};
+
+################################################################
+
+package main::Command::metacpan {
+    use Mojo::Base 'Mojolicious::Command';
+
+    sub run {
+        my ($self, @args) = @_;
+
+        return $self->app->smoker->metacpan_modules(@args);
     }
 };
 
@@ -399,9 +500,9 @@ package main::Command::apply {
     use Mojo::Base 'Mojolicious::Command';
 
     sub run {
-        my ($self, @selected_modules) = @_;
+        my ($self, @args) = @_;
 
-        return ::apply(@_);
+        return $self->app->smoker->apply(@args);
     }
 }
 
@@ -419,69 +520,35 @@ package main::Command::create {
         
     }
     
-}
-
-################################################################
-################################################################
-################################################################
-
-package Smoker::Database {
-
-    use Mojo::Base -base;
-    use Mojo::File;
-
-    use Mojo::SQLite;
-    # use Mojo::Pg;         # Alternate databases possible via connection string
-
-    use SQL::Abstract::More;
-
-    has 'database';
-    has 'rebuild';     # Flag to rebuild database.  Useful for debugging or reprovisioning
-    has 'sql' => sub { # Set during instantiation; or, create object
-        my ($self) = @_;
-        if (defined $self->database) {
-            Mojo::SQLite->new('sqlite:' . $self->database);
-        }
-    };
-
-    sub new {
-        my $class = shift;
-        my $self = $class->SUPER::new(@_);
-
-        $self->sql->abstract(SQL::Abstract::More->new());
-
-        $self->sql->migrations->name('smoker_migrations')->from_data('main', 'sqlite_migrations');
-
-        $self->sql->migrations->tap(sub { $self->rebuild and $_->migrate(0) })->migrate;
-        my $jmode = $self->sql->db->query('PRAGMA journal_mode=WAL;');
-        if ($jmode->arrays->[0]->[0] ne 'wal') {
-            warn 'Note: Write-ahead mode not enabled';
-        }
-        
-        return $self;
-    }
-
 };
+
+################################################################
+################################################################
+################################################################
 
 push @{app->commands->namespaces}, 'main::Command';
 
-# XXX: Can't call getopt before minion's option processing, but how do we override rebuild and database= ?
-
-getopt
-'d|database=s'    => \my $db_name,
-'r|rebuild'   => \my $rebuild,
-#'v|verbose'   => \my $verbose,
-;
-
 plugin 'Config';
-
-app->config('dbname', $db_name) if defined $db_name;
 
 plugin 'Minion' => { SQLite => 'sqlite:'. app->config->{dbname} };
 
+helper smoker => sub {
+    my ($self) = @_;
+
+    # XXX: Can't call getopt before minion's option processing, but how do we rebuild?
+    getopt
+    'r|rebuild'   => \my $rebuild,
+    #'v|verbose'   => \my $verbose,
+    ;
+
+    state $smoker = Tester::Smoker->new(database => $self->config->{dbname},
+                                        config   => $self->config,
+                                        rebuild  => $rebuild);
+};
+
 helper sql => sub {
     my ($self) = @_;
-    state $db = Smoker::Database->new(database => $self->config->{dbname}, rebuild => $rebuild)->sql;
+    state $sql = $self->smoker->sql;
 };
 
 helper db => sub {
@@ -569,6 +636,12 @@ get '/jobs/stats' => sub {
     my $stats = $self->app->minion->stats;
     $self->render(json => $stats);
 };
+
+app->minion->add_task( test => sub { my ($job, @args) = @_;
+                                     my $result = ModuleTest::test_module ( $job->app, @args);
+                                     # probably call $job->finished($message) or $job->fail($message)
+                                 } );
+
 
 app->start;
 

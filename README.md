@@ -82,3 +82,61 @@ or by pointing your browser at http://localhost:3000
 
 
 
+==========
+
+releases within last 2 days --? izzit true?
+
+curl -XPOST 'https://fastapi.metacpan.org/v1/file' -d "$(curl -Ls gist.github.com/metacpan-user/5705999/raw/body.json)"
+
+with:
+
+---begin---
+{
+  "query": {
+    "match_all": {}
+  },
+  "filter": {
+    "and": [
+      {
+        "term": {
+          "path": "cpanfile"
+        }
+      },
+      {
+        "term": {
+          "status": "latest"
+        }
+      },
+      {
+        "range" : {
+            "date" : {
+                "gte" : "now-2d/d",
+                "lt" :  "now/d"
+            }
+        }        
+      }    
+    ]
+  },
+  "fields": [
+    "release", "date"
+  ],
+  "size": 200
+}
+---end---
+
+or:
+
+---begin---
+{ "query": { "match_all": {} }, "filter": { "and": [ { "term": { "path": "cpanfile" } }, { "term": { "status": "latest" } }, { "or": [ {"term" : { "author" : "PREACTION" } }, {"term" : { "author" : "JBERGER" }} ] } ] }, "fields": [ "release", "date", "author" ], "size": 200 }
+---end---
+
+                                                                                 
+{ 'size' => 200,
+  'fields' => ['release', 'date', 'author', 'download_url', 'version'],
+  'filter' => {'and' => [ {'term' => {'path' => 'cpanfile'}},
+                          {'term' => {'status' => 'latest'}},
+                          {'or' => [{'term' => {'author' => 'PREACTION'}},
+                                      {'term' => {'author' => 'JBERGER'}}]}
+                         ]},
+  'query' => {'match_all' => {}}
+}
