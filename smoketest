@@ -365,51 +365,82 @@ package Tester::Smoker {
 
     ################
     
-    sub _author {
+    sub _item_list {
         # Returns empty list (which gets skipped in building list later) if no author, -or-
         # {'term' => {'author' => 'JBERGER'}},  # single author passed
         # {'or' => [{'term' => {'author' => 'PREACTION'}},
         #           {'term' => {'author' => 'JBERGER'}}]}  # 'PREACTION,JBERGER' passed-in
-        my $author_list = shift;
-        return () unless defined $author_list;
-        return { term => { author => $author_list }} unless $author_list =~ /,/;
-        return { term => { or => [ map { { term => { author => $_ }} } split (',',$author_list) ] } };
+        #
+        my $option = shift;
+        my @item_list;
+        while (defined (my $item = shift)) {
+            if (ref $item) {
+                push @item_list, map { split /,/ } @{$item};
+                next;
+            }
+            push @item_list, split (',', $item) if defined $item;
+        }
+        if (ref $option) {
+            if (!scalar @item_list) {
+                return ${$option}[1];
+            }
+            $option = ${$option}[0];
+        }
+        return () unless scalar @item_list;
+        return { term => { $option => $item_list[0] }} if (scalar @item_list == 1);
+        return { term => { or => [ map { { term => { $option => $_ }} } @item_list ] } };
     }
 
+    sub _date_range {
+        my ($start, $end) = @_;
+        if (defined $start && defined $end) {
+            return ( range => { date => { gte => $start, lte => $end } } );
+        }
+        return ('match_all' => {});   # populate 'query' with this
+    }
 
     sub metacpan_modules {
         my ($self, @args) = @_;
         # See also: https://github.com/metacpan/metacpan-api/blob/master/docs/API-docs.md
-        my $req = { 'size' => 200,
+
+        my $req = { 'size' => $self->{count} // 10,
                     'fields' => [qw(name version date provides author download_url main_module)],
-                    'filter' => {'and' => [ { term => {main_module => 'Zoidberg'} },
-                                            # {'term' => {'status' => 'latest'}},
-                                            # _author('JBERGER'),
+                    'filter' => {'and' => [ # { term => {main_module => 'Zoidberg'} },
+                                           _item_list('main_module', $self->{modules}),
+                                           _item_list('author', $self->{authors}),
+                                           _item_list(['version', {term => {'status' => 'latest'}}], $self->{versions}),
                                           ]},
-                    'query' => {'match_all' => {}},
+                    'query' => {
+                                _date_range( $self->{start_date}, $self->{end_date} ) },
                     'sort' => {'date' => 'desc'},
                   };
+
+        # {
+        #     use Data::Dumper;
+        #     # print STDERR Dumper($req);
+        #     use Mojo::JSON;
+        #     print STDERR Mojo::JSON::to_json($req);
+        #     # exit;
+        # }
 
         my $ua = Mojo::UserAgent->new();
         my $source_url = 'https://fastapi.metacpan.org/v1/release';
         my $modules = $ua->post($source_url => json => $req)->result;
         my $module_list = defined ($modules) ? Mojo::JSON::decode_json($modules->body) : {};
         my $hits = $module_list->{hits}->{hits};
-            ; $DB::single = 1;
+        # ; $DB::single = 1;
         foreach my $module (@{$hits}) {
             # my $relative_url = Mojo::URL->new($module->{fields}->{download_url})->path;
             # For now, save full URL instead of relative.
-
-            # print STDERR "bork";
-            # my $provides = $module->{fields}->{provides};
-            my $provides = $module->{fields}->{main_module};
-            foreach my $name (ref $provides ? @{$provides} : ($provides) ) {
-                print STDERR $module->{fields}->{name} . ' -> ' . $name ."\n";
-                $self->sql->db->query('INSERT OR REPLACE INTO modules(name, version, released, author, relative_url) '.
-                                      'VALUES (?,?,?,?,?)',
-                                      $name,
-                                      @{$module->{fields}}{qw(version date author download_url)});
-            }
+            # print STDERR $module->{fields}->{main_module} . ' '.
+            # $module->{fields}->{version} . " " .
+            # $module->{fields}->{date} . " " .
+            # "\n";
+            # NOTE: There is a list of provided (sub)modules, in: $module->{fields}->{provides};
+            $self->sql->db->query('INSERT OR REPLACE INTO modules(name, version, released, author, relative_url) '.
+                                  'VALUES (?,?,?,?,?)',
+                                  $module->{fields}->{main_module},
+                                  @{$module->{fields}}{qw(version date author download_url)});
         }
 
 
@@ -417,7 +448,6 @@ package Tester::Smoker {
 
 
     sub cpan_recent {
-        # ; $DB::single = 1;
         my ($self, @args) = @_;
     }
 
@@ -537,13 +567,28 @@ helper smoker => sub {
 
     # XXX: Can't call getopt before minion's option processing, but how do we rebuild?
     getopt
-    'r|rebuild'   => \my $rebuild,
+    # 'r|rebuild'   => \my $rebuild,
+    'a|author=s'  => \my @authors,
+    'module=s'    => \my @modules,
+    'r|recent=i'  => \my $freshness,  # in days
+    'rev|revision=s' => \my @versions,  # probably should change meaning of 'count'
+    'c|count=i'   => \my $count,
+    'start|start_date=s', \my $start_date,
+    'end|end_date=s', \my $end_date,
     #'v|verbose'   => \my $verbose,
     ;
 
     state $smoker = Tester::Smoker->new(database => $self->config->{dbname},
                                         config   => $self->config,
-                                        rebuild  => $rebuild);
+                                        # rebuild  => $rebuild,
+                                        authors  => \@authors,
+                                        modules  => \@modules,
+                                        versions => \@versions,
+                                        recent   => $freshness,
+                                        start_date => $start_date,
+                                        end_date => $end_date,
+                                        count    => $count,
+                                       );
 };
 
 helper sql => sub {
