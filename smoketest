@@ -20,6 +20,8 @@ use warnings;
 #   $ perl smoketest update
 # to update from the default CPAN location (remote URL)
 
+# ./smoketest module --author PREACTION --count 5 --start_date=2012-07-01 --end_date=2012-12-30 -v -f
+
 sub enable_recent {
     # Get the list of most recently updated modules from source; default to
     # http://cpan.cpantesters.org/modules/01modules.mtime.html
@@ -349,7 +351,7 @@ package Tester::Smoker {
 
         my $module_id = $args->{module_id};
         # cpanm --test-only ((FULL_URL))
-        ; $DB::single = 1;
+        # ; $DB::single = 1;
         print "(test $module_id)";
 
         my $results = $self->sql->db->query('SELECT name, version, relative_url FROM modules WHERE id=?', $module_id)
@@ -400,7 +402,8 @@ package Tester::Smoker {
             }
             push @item_list, split (',', $item) if defined $item;
         }
-        if (ref $option) {
+        # XXX: Probably eliminate the special-case of ref and move that logic into _versions() below
+        if (ref $option) { # Listref: [term, value to return if item is empty]
             if (!scalar @item_list) {
                 return ${$option}[1];
             }
@@ -419,15 +422,31 @@ package Tester::Smoker {
         return ('match_all' => {});   # populate 'query' with this
     }
 
-    sub metacpan_modules {
+    sub _versions {
+        my ($versions, $modules, $count) = @_;
+        # TODO:
+        # Return appropriate for these use cases
+        # - get the one latest version (status=latest) of each of several modules
+        # - get last 'n' versions of one module (use 'count')
+        # - get specific versions of one module
+        # ... _item_list(['version', {term => {'status' => 'latest'}}], $self->{versions}) ...
+
+        # XXX: this won't work, because _item_list does more than just separate out comma-delimited lists
+        my @selected_versions = _item_list($versions);
+        return @selected_versions if scalar @selected_versions;
+        # ...
+    }
+
+
+    sub test_metacpan {
         my ($self, @args) = @_;
         # See also: https://github.com/metacpan/metacpan-api/blob/master/docs/API-docs.md
 
         my $req = { 'size' => $self->{count} // 10,
                     'fields' => [qw(name version date provides author download_url main_module)],
-                    'filter' => {'and' => [ # { term => {main_module => 'Zoidberg'} },
-                                           _item_list('main_module', $self->{modules}),
+                    'filter' => {'and' => [_item_list('main_module', $self->{modules}),
                                            _item_list('author', $self->{authors}),
+                                           # TODO: Change this to _versions() above???
                                            _item_list(['version', {term => {'status' => 'latest'}}], $self->{versions}),
                                           ]},
                     'query' => {
@@ -436,7 +455,7 @@ package Tester::Smoker {
                   };
 
         my $ua = Mojo::UserAgent->new();
-        my $source_url = $self->config->{metacpan_release}; # 'https://fastapi.metacpan.org/v1/release';
+        my $source_url = $self->config->{metacpan_release}; # API endpoint
         my $modules = $ua->post($source_url => json => $req)->result;
         my $module_list = defined ($modules) ? Mojo::JSON::decode_json($modules->body) : {};
         my $hits = $module_list->{hits}->{hits};
@@ -463,11 +482,13 @@ package Tester::Smoker {
                                           $module->{fields}->{version}
                                          )->hash->{id};
                 };
-                print 'Testing ' . $module->{fields}->{main_module} . " = $id (--force in effect)\n"
+                print 'Queue test for ' . $module->{fields}->{main_module} .' v' . $module->{fields}->{version}
+                . " = $id (--force in effect)\n"
                 if defined $id && $self->{verbose};
             }
             if (defined $id) {
                 # enqueue Minion testing job
+                # TODO: append Perl version for use with Perlbrew
                 $self->minion->enqueue(test => [module_id => $id]);
             }
         }
@@ -538,13 +559,13 @@ package main::Command::enable_recent {
 
 ################################################################
 
-package main::Command::metacpan {
+package main::Command::module {
     use Mojo::Base 'Mojolicious::Command';
 
     sub run {
         my ($self, @args) = @_;
 
-        return $self->app->smoker->metacpan_modules(@args);
+        return $self->app->smoker->test_metacpan(@args);
     }
 };
 
