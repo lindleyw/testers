@@ -344,10 +344,19 @@ package Tester::Smoker {
     ################################################################
 
     sub test {
-        my ($self, $module_id, $perl_version) = @_;
+        my $self = shift;
+        my $args = {@_};
 
+        my $module_id = $args->{module_id};
         # cpanm --test-only ((FULL_URL))
-        
+        ; $DB::single = 1;
+        print "(test $module_id)";
+
+        my $results = $self->sql->db->query('SELECT name, version, relative_url FROM modules WHERE id=?', $module_id)
+        ->hashes;
+        $results = $results->first if defined $results;
+        print "(($results->{name})) (($results->{version}))\n";
+        # Check against 'disabled' regex; if matches, fail with error.
 
     }
 
@@ -426,42 +435,42 @@ package Tester::Smoker {
                     'sort' => {'date' => 'desc'},
                   };
 
-        # {
-        #     use Data::Dumper;
-        #     # print STDERR Dumper($req);
-        #     use Mojo::JSON;
-        #     print STDERR Mojo::JSON::to_json($req);
-        #     # exit;
-        # }
-
         my $ua = Mojo::UserAgent->new();
-        my $source_url = 'https://fastapi.metacpan.org/v1/release';
+        my $source_url = $self->config->{metacpan_release}; # 'https://fastapi.metacpan.org/v1/release';
         my $modules = $ua->post($source_url => json => $req)->result;
         my $module_list = defined ($modules) ? Mojo::JSON::decode_json($modules->body) : {};
         my $hits = $module_list->{hits}->{hits};
-        # ; $DB::single = 1;
+
         foreach my $module (@{$hits}) {
-            # my $relative_url = Mojo::URL->new($module->{fields}->{download_url})->path;
-            # For now, save full URL instead of relative.
-            # print STDERR $module->{fields}->{main_module} . ' '.
-            # $module->{fields}->{version} . " " .
-            # $module->{fields}->{date} . " " .
-            # "\n";
             # NOTE: There is a list of provided (sub)modules, in: $module->{fields}->{provides};
-            my $id =
-            $self->sql->db->query('INSERT OR REPLACE INTO modules(name, version, released, author, relative_url) '.
-                                  'VALUES (?,?,?,?,?)',
-                                  $module->{fields}->{main_module},
-                                  @{$module->{fields}}{qw(version date author download_url)})
-            ->last_insert_id;
+            my $id = eval {
+                $self->sql->db->query('INSERT INTO modules(name, version, released, author, relative_url) '.
+                                      'VALUES (?,?,?,?,?)',
+                                      $module->{fields}->{main_module},
+                                      @{$module->{fields}}{qw(version date author download_url)})
+                ->last_insert_id;
+            };
+            print 'Adding ' . $module->{fields}->{main_module} . " = $id\n"
+            if (defined $id && $self->{verbose});
+            # For now, save full URL instead of relative.  Could do something like:
+            # my $relative_url = Mojo::URL->new($module->{fields}->{download_url})->path;
+
+            # Newly-seen modules are always tested. Can also force testing of old ones.
+            if (!defined $id && $self->{force_test}) {
+                $id = eval {
+                    $self->sql->db->query('SELECT id FROM modules WHERE name=? AND version=?',
+                                          $module->{fields}->{main_module},
+                                          $module->{fields}->{version}
+                                         )->hash->{id};
+                };
+                print 'Testing ' . $module->{fields}->{main_module} . " = $id (--force in effect)\n"
+                if defined $id && $self->{verbose};
+            }
             if (defined $id) {
                 # enqueue Minion testing job
-                $self->minion->enqueue('test', {module_id => $id});
+                $self->minion->enqueue(test => [module_id => $id]);
             }
-
         }
-
-
     }
 
 
@@ -564,8 +573,21 @@ package main::Command::create {
 
     sub run {
         my ($self, @selected_modules) = @_;
+    }
+    
+};
 
-        
+################################################################
+
+# Force immediate in-this-thread execution of Minion jobs
+# compare:   $ ./smoketest minion worker
+
+package main::Command::do {
+    use Mojo::Base 'Mojolicious::Command';
+
+    sub run {
+        my ($self) = @_;
+        $self->app->minion->perform_jobs();
     }
     
 };
@@ -593,7 +615,8 @@ helper smoker => sub {
     'c|count=i'   => \my $count,
     'start|start_date=s', \my $start_date,
     'end|end_date=s', \my $end_date,
-    #'v|verbose'   => \my $verbose,
+    'f|force'     => \my $force_test,
+    'v|verbose'   => \my $verbose,
     ;
 
     state $smoker = Tester::Smoker->new(database => $self->config->{dbname},
@@ -607,6 +630,8 @@ helper smoker => sub {
                                         start_date => $start_date,
                                         end_date => $end_date,
                                         count    => $count,
+                                        force_test => $force_test,
+                                        verbose  => $verbose,
                                        );
 };
 
@@ -623,8 +648,8 @@ helper db => sub {
 ################
 
 app->minion->add_task( test => sub { my ($job, @args) = @_;
-                                       test( $job->app, @args);
-                                       # probably call $job->finished($message) or $job->fail($message)
+                                     $job->app->smoker->test(@args);
+                                     # probably call $job->finished($message) or $job->fail($message)
                                    } );
 
 get '/modules' => sub {
@@ -662,9 +687,10 @@ get '/tests/:modname' => sub {
 };
 
 app->minion->add_task( update => sub { my ($job, @args) = @_;
-                                       update( $job->app, @args);
+                                       $job->app->smoker->update(@args);
                                        # probably call $job->finished($message) or $job->fail($message)
                                    } );
+
 get '/update' => sub {
     my ($self) = @_;
     my $id = $self->app->minion->enqueue('update', {priority => 0});
@@ -705,12 +731,6 @@ get '/jobs/stats' => sub {
     my $stats = $self->app->minion->stats;
     $self->render(json => $stats);
 };
-
-app->minion->add_task( test => sub { my ($job, @args) = @_;
-                                     my $result = ModuleTest::test_module ( $job->app, @args);
-                                     # probably call $job->finished($message) or $job->fail($message)
-                                 } );
-
 
 app->start;
 
