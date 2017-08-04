@@ -1,5 +1,7 @@
 #!/usr/bin/env perl
 
+use Acme::Bleach;
+
 use Mojolicious::Lite;
 
 use Mojo::Util qw(getopt);
@@ -362,12 +364,7 @@ package Tester::Smoker {
         $results = $results->first if defined $results;
         print "(($results->{name})) (($results->{version}))\n";
         # Check against 'disabled' regex; if matches, fail with error.
-        if ($self->_apply_regexes($results->{id})) {  # module is disabled
-            # fail with error
-        } else {
-            # actually test the module
-            # ...save result
-        }
+
     }
 
     ################################################################

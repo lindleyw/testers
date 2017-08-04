@@ -80,6 +80,16 @@ or by pointing your browser at http://localhost:3000
     /jobs/stats        minion stats
 
 
+==========
+
+running cpanm-reporter for first time:
+
+  See CPAN::Testers::Common::Client::Config documentation for more
+  details.
+
+asks a bunch of options and then:
+
+  CPAN Testers: writing config file to '/home/billl/.cpanreporter/config.ini'.
 
 
 ==========
@@ -140,3 +150,4 @@ or:
                          ]},
   'query' => {'match_all' => {}}
 }
+
