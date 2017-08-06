@@ -140,6 +140,7 @@ package Tester::Smoker {
 
     has 'database';
     has 'rebuild';     # Flag to rebuild database.  Useful for debugging or reprovisioning
+    has 'log';
     has 'sql' => sub { # Set during instantiation; or, create object
         my ($self) = @_;
         if (defined $self->database) {
@@ -189,7 +190,7 @@ package Tester::Smoker {
         my $result = $ua->get($source_url);
         if ($result->res->{code} == 200) {
             my $module_fields = $result->res->json;
-            $self->save_module_info($module_fields);  # ignores return id value
+            $module_fields->{_db_id} = $self->save_module_info($module_fields);  # keep new id value
             return $module_fields;
         }
         return undef;
@@ -208,18 +209,19 @@ package Tester::Smoker {
         my ($priority, $author, $version, $reason);
 
         if ($source_url->protocol || $source_url->host) {
-            # Remote file
-
-            # Retrieve https://fastapi.metacpan.org/v1/release/CPAN and look at {version}
-            # or, preferably, update the database with that
+            # Remote file.  Retrieve
+            # https://fastapi.metacpan.org/v1/release/CPAN and look at
+            # {version}
             my $module = $self->update_module('CPAN');
-
             ($author, $version) = @{$module}{qw(author version)};
-
             if ($version ne cpan_wrapper::version()) {
-                warn "Our cpan=$CPAN::VERSION but remote is $version";
+                $self->log->warn ("Our cpan=$CPAN::VERSION but remote is $version");
             }
 
+            return 1 unless $module->{_db_id};  # Already in database; use cached instead of storing anew
+
+            $reason = "${author}/CPAN-${version}";
+            $priority = 100;    # Default for remote file
             unless ($source_url->path  =~ /\.\w+/) { # If just a path, without a filename+extension: use default
                 push @{$source_url->path->parts}, ( $author,
                                                     'CPAN-' . $version,
@@ -228,25 +230,27 @@ package Tester::Smoker {
                                                     '01.DISABLED.yml'
                                                   );
                 $source_url->path->trailing_slash(0);
+                my $ua = Mojo::UserAgent->new();
+                $disabled_list = $ua->get($source_url)->result;
+                unless ($disabled_list->is_success) {
+                    $self->log->warn("Can't download disabled list: ".$disabled_list->message);
+                    return 0;
+                }
+                $disabled_list = $disabled_list->body;
             }
-            $reason = "${author}/CPAN-${version}";
-            my $ua = Mojo::UserAgent->new();
-            $disabled_list = $ua->get($source_url)->result;
-            die "Can't download disabled list: ".$disabled_list->message
-                unless $disabled_list->is_success;
-            $disabled_list = $disabled_list->body;
-            $priority = 100;    # Default for remote file
         } else {
             # Local file
             $reason = $source;
             $priority = 50;     # Default for local
             $disabled_list = Mojo::File->new( $source)->slurp;
-            die "No module list file" unless length($disabled_list);
+            unless (length($disabled_list)) {
+                $self->log->error("No module list file");
+                return 0;
+            }
         }
 
-        my $matchfile = YAML::Load($disabled_list);
-        
-        # save as meta-information in the Modules list
+        # Decode and save as meta-information in the Modules list
+        my $matchfile = eval{YAML::Load($disabled_list)};
         my $saved = $self->sql->db->query('INSERT OR REPLACE INTO module_flags (priority, origin, author, disable, regex) '.
                                           'VALUES (?,?,?,?,?)',
                                           $priority, $reason, $author, $matchfile->{disabled}, $matchfile->{match}{distribution}
@@ -673,6 +677,7 @@ helper smoker => sub {
     state $smoker = Tester::Smoker->new(database => $self->config->{dbname},
                                         minion   => $self->minion,
                                         config   => $self->config,
+                                        log      => $self->app->log,
                                         # rebuild  => $rebuild,
                                         authors  => \@authors,
                                         modules  => \@modules,
