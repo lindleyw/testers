@@ -168,11 +168,39 @@ package Tester::Smoker {
 
     use YAML;
 
-    sub disable {
+    sub save_module_info {
+        my ($self, $fields) = @_;
+        my $id = eval {
+                $self->sql->db->query('INSERT INTO modules(name, version, released, author, relative_url) '.
+                                      'VALUES (?,?,?,?,?)',
+                                      $fields->{main_module},
+                                      @{$fields}{qw(version date author download_url)})
+                ->last_insert_id;
+            };
+        return $id;
+    }
+
+    sub update_module {
+        my ($self, $module_name) = @_;
+
+        my $ua = Mojo::UserAgent->new();
+        my $source_url = Mojo::URL->new($self->config->{metacpan_release}); # API endpoint
+        push @{$source_url->path->parts}, 'CPAN';
+        my $result = $ua->get($source_url);
+        if ($result->res->{code} == 200) {
+            my $module_fields = $result->res->json;
+            $self->save_module_info($module_fields);  # ignores return id value
+            return $module_fields;
+        }
+        return undef;
+    }
+
+    sub save_regex {
         my ($self, $source) = @_;
 
-        # Load a local or remote copy of a regex which will be applied against the list of modules,
-        # to disable (or enable) them.
+        # Save to the database, a local or remote copy of a regex
+        # which will be applied against the list of modules, and which
+        # will disable (or enable) them.
 
         # If no source specified, load default remote file
         my $source_url = Mojo::URL->new($source // $self->config->{cpan_source});
@@ -182,11 +210,10 @@ package Tester::Smoker {
         if ($source_url->protocol || $source_url->host) {
             # Remote file
 
-            my $module = $self->sql->db->query('SELECT * FROM modules WHERE NAME=? ORDER BY added DESC LIMIT 1',
-                                               'CPAN');
-            return undef unless defined $module;
-            $module = $module->hashes->first;
-            return undef unless defined $module;
+            # Retrieve https://fastapi.metacpan.org/v1/release/CPAN and look at {version}
+            # or, preferably, update the database with that
+            my $module = $self->update_module('CPAN');
+
             ($author, $version) = @{$module}{qw(author version)};
 
             if ($version ne cpan_wrapper::version()) {
@@ -537,13 +564,13 @@ package main::Command::update {
 
 ################################################################
 
-package main::Command::disable {
+package main::Command::regex {
     use Mojo::Base 'Mojolicious::Command';
 
     sub run {
         my ($self, @args) = @_;
 
-        return $self->app->smoker->disable(@args);
+        return $self->app->smoker->save_regex(@args);
     }
 
 };
