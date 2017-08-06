@@ -360,20 +360,26 @@ package Tester::Smoker {
         my ($self, $module_id) = @_; 
 
         # For each available enable/disable list, prepare to apply in priority order
-        my $regex_list = $self->app->db->query('SELECT * FROM module_flags ORDER BY priority DESC, added DESC');
+        my $regex_list = eval{$self->sql->db->query('SELECT * FROM module_flags ORDER BY priority DESC, added DESC');};
         return undef unless defined $regex_list;
+        $regex_list = $regex_list->hashes;
 
-        my $module_info = $self->app->db->query('SELECT * FROM modules WHERE id=?', $module_id);
+        my $module_info = $self->sql->db->query('SELECT * FROM modules WHERE id=?', $module_id)->hashes;
+        return 1 unless $module_info;
+        $module_info = $module_info->first;
         my $disabled = 0;
         my $disabled_by;
-        $regex_list->hashes->each( sub {
-                            if ( $module_info->{name} =~ $_->{regex} ) {
-                                $disabled = $_->{disable};
-                                $disabled_by = $disabled ? $_->{id} : undef;
-                            }
-                        } );
-        $self->app->db->query('UPDATE modules SET disabled_by = ? WHERE id = ?',
-                             $disabled_by, $module_info->{id});
+        ; $DB::single = 1;
+
+        $regex_list->each( sub {
+                               if ( join('/', $module_info->{author}, $module_info->{name}) =~ $_->{regex} ) {
+                                   $disabled = $_->{disable};
+                                   $disabled_by = $disabled ? $_->{id} : undef;
+                               }
+                           } );
+        # Save final enabled/disabled status
+        eval { $self->sql->db->query('UPDATE modules SET disabled_by = ? WHERE id = ?',
+                             $disabled_by, $module_info->{id}); };
         return $disabled;
     }
 
@@ -384,18 +390,19 @@ package Tester::Smoker {
         my $args = {@_};
 
         my $module_id = $args->{module_id};
+        return 0 unless $module_id;
         # cpanm --test-only ((FULL_URL))
-        # ; $DB::single = 1;
-        print "(test $module_id)";
-
         my $results = $self->sql->db->query('SELECT name, version, relative_url FROM modules WHERE id=?', $module_id)
         ->hashes;
-        $results = $results->first if defined $results;
-        print "(($results->{name})) (($results->{version}))\n";
+        return 0 unless defined $results;
+        $results = $results->first;
+
         # Check against 'disabled' regex; if matches, fail with error.
-        if ($self->_apply_regexes($results->{id})) {  # module is disabled
-            # fail with error
+        if ($self->_apply_regexes($module_id)) {  # module is disabled
+            $self->log->info("module is disabled");
+            return 0;
         } else {
+            $self->log->info("Testing: (($results->{name})) (($results->{version}))");
             # actually test the module
             # ...save result
         }
@@ -477,7 +484,7 @@ package Tester::Smoker {
     }
 
     sub test_metacpan {
-        my ($self, @args) = @_;
+        my ($self) = @_;
         # See also: https://github.com/metacpan/metacpan-api/blob/master/docs/API-docs.md
 
         my $req = { 'size' => $self->{count} // 10,
@@ -507,7 +514,7 @@ package Tester::Smoker {
                                       @{$module->{fields}}{qw(version date author download_url)})
                 ->last_insert_id;
             };
-            print 'Adding ' . $module->{fields}->{main_module} . " = $id\n"
+            $self->log->info('Adding ' . $module->{fields}->{main_module} . " = $id")
             if (defined $id && $self->{verbose});
             # For now, save full URL instead of relative.  Could do something like:
             # my $relative_url = Mojo::URL->new($module->{fields}->{download_url})->path;
@@ -520,8 +527,8 @@ package Tester::Smoker {
                                           $module->{fields}->{version}
                                          )->hash->{id};
                 };
-                print 'Queue test for ' . $module->{fields}->{main_module} .' v' . $module->{fields}->{version}
-                . " = $id (--force in effect)\n"
+                $self->log->info('Queue test for ' . $module->{fields}->{main_module} .' v' . $module->{fields}->{version}
+                . " = $id (--force in effect)")
                 if defined $id && $self->{verbose};
             }
             if (defined $id) {
