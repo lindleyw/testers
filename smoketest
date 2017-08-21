@@ -169,6 +169,49 @@ package Tester::Smoker {
 
     use YAML;
 
+    sub update_perl_versions {
+        my $self = shift;
+
+        use Sys::Hostname;
+        # hostname() returns our fqdn, if available
+
+        # Retrieve all available Perl versions
+        my @perl_versions = grep {length}
+             split(/\s*\*?\s+/, `perlbrew list`);
+
+        foreach my $v (@perl_versions) {
+            # INSERT INTO environments(host, perlbrew)
+            # VALUES ?,?
+            # hostname(), $v
+            # Newly-inserted versions get a new id; otherwise error
+
+            my $id = eval {
+                $self->sql->db->query('INSERT INTO environments(host, perlbrew) '.
+                                      'VALUES (?,?)',
+                                      hostname(), $v)->last_insert_id;
+            };
+            if (defined $id) {
+                my $version_specific = `perlbrew exec --with $v perl -MConfig -MSys::Hostname -e 'print join("\n", %Config{qw(osname osvers version)})'`;
+                # returns:  (perl-5.24.1)\n=======...===\n and results
+                if ($version_specific =~ /===\s+(.*?)\s*\z/s) {
+                    my $version_info = {split /\n/, $1};
+                    print "www";
+                    eval {
+                        $self->sql->db->query('UPDATE environments '.
+                                              'SET osname=?, osvers=?, perl=? WHERE id=?',
+                                              $version_info->@{qw(osname osvers version)}, # hash slice
+                                              $id
+                                              );
+                    };
+                    ; $DB::single = 1;
+                    print "xxx";
+                }
+            }
+        }
+
+        
+    }
+
     sub save_module_info {
         my ($self, $fields) = @_;
         my $id = eval {
@@ -369,7 +412,6 @@ package Tester::Smoker {
         $module_info = $module_info->first;
         my $disabled = 0;
         my $disabled_by;
-        ; $DB::single = 1;
 
         $regex_list->each( sub {
                                if ( join('/', $module_info->{author}, $module_info->{name}) =~ $_->{regex} ) {
@@ -404,6 +446,82 @@ package Tester::Smoker {
         } else {
             $self->log->info("Testing: (($results->{name})) (($results->{version}))");
             # actually test the module
+
+            # May want to re-introduce timeout
+
+            eval {
+                # setup to handle signals
+                local $SIG{'HUP'}  = sub { say "Got hang up" };
+                local $SIG{'INT'}  = sub { say "Got interrupt" };
+                local $SIG{'STOP'} = sub { say "Stopped" };
+                local $SIG{'TERM'} = sub { say "Got term" };
+                local $SIG{'KILL'} = sub { say "Got kill" };
+
+                # this one won't work with apostrophes like above
+                local $SIG{__DIE__} = sub { say "Got die" };
+
+                # next two variable settings are explained in this link
+                ### http://www.dagolden.com/index.php/2098/the-annotated-lancaster-consensus
+                local $ENV{NONINTERACTIVE_TESTING} = 1;
+                local $ENV{AUTOMATED_TESTING}      = 1;
+
+            #     # cpanm will put its test reports in this directory,
+            #     # cpanm-reporter will get its input from this directory
+            #     local $ENV{PERL_CPANM_HOME} = "$function_cpanm_home/$perlbuild";
+            #     say "PERL_CPANM_HOME is:  $ENV{PERL_CPANM_HOME}" if ($verbose);
+
+            #     my $BUILD_DIR     = $ENV{PERL_CPANM_HOME};
+            #     my $BUILD_LOGFILE = "$BUILD_DIR/build.log";
+
+            #     unless ( -d $BUILD_DIR ) {
+            #         mkdir $BUILD_DIR;
+            #         system("chmod 777 $BUILD_DIR");
+            #     }
+
+            #     say "BUILD_DIR is: $BUILD_DIR for $perlbuild"         if ($verbose);
+            #     say "BUILD_LOGFILE is: $BUILD_LOGFILE for $perlbuild" if ($verbose);
+
+            #     # isolate module name
+            #     $module = substr( $module, 0, rindex( $module, '-' ) )
+            #         if ( $module =~ /-/ );
+            #     say "module name cleared of final dash:  $module" if ($verbose);
+
+            #     $module = substr( $module, rindex( $module, '/' ) + 1 );
+            #     $module =~ s/-/::/g;
+
+            #     # test the module, don't install it
+            #     my $command = "perlbrew exec --with $perlbuild ";
+            #     $command .= "cpanm --test-only $module ";
+            #     $command .= "| tee $test_log_home/$module.$perlbuild ";
+            #     say "about to test $module for $perlbuild" if ($verbose);
+            #     system("which perl") if ($verbose);
+            #     check_test_exit( system("$command") );
+            #     say "Should have completed testing $module for $perlbuild"
+            #         if ($verbose);
+
+            #     # The system() command above creates a directory like
+            #     # ~/.cpanm/work/TIMESTAMP.PID e.g., 1499707240.6465
+            #     # containing:
+            #     #    build.log
+            #     #    Mojolicious-7.36   # directory name is module and version
+            #     #    " " " .tar.gz
+
+            #     # if ls output missing, testlog not created
+            #     # if Succ tested not found, test failed
+            #     # if Succ tested found, test passed
+            #     # rewrite this to avoid shelling out
+
+            #     system("echo >> tlog");
+            #     system("ls $test_log_home/$module.$perlbuild >> tlog 2>&1");
+            #     system(
+            #            "grep \'Successfully tested\' $test_log_home/$module.$perlbuild >> tlog 2>&1"
+            #           );
+
+                # have test reports sent by a separate task
+            };
+
+
+
             # ...save result
         }
     }
@@ -570,6 +688,18 @@ package main::Command::update {
         my ($self, @args) = @_;
 
         return $self->app->smoker->update(@args);
+    }
+};
+
+################################################################
+
+package main::Command::update_perl_versions {
+    use Mojo::Base 'Mojolicious::Command';
+
+    sub run {
+        my ($self, @args) = @_;
+
+        return $self->app->smoker->update_perl_versions(@args);
     }
 };
 
@@ -756,6 +886,7 @@ app->minion->add_task( update => sub { my ($job, @args) = @_;
 
 get '/update' => sub {
     my ($self) = @_;
+    ; $DB::single = 1;
     my $id = $self->app->minion->enqueue('update', {priority => 0});
     $self->render(json => {job => {task => 'update', id => $id}});
 };
@@ -871,14 +1002,17 @@ CREATE UNIQUE INDEX module_flags_idx ON module_flags (origin);
 CREATE TABLE environments (
                            id INTEGER PRIMARY KEY,
                            host TEXT,         -- Hostname (preferably full name; 'localhost' is less helpful)
+                           perlbrew TEXT,     -- Version name we pass to Perlbrew
                            -- These (platform, perl, osname, osvers) match fields in Testers Metabase
                            -- See https://github.com/barbie/cpan-testers-data-generator/
                            platform   TEXT,   
-                           perl       TEXT,   -- Perl version
-                           osname     TEXT,   --
-                           osvers     TEXT,   --
+                           perl       TEXT,   -- Perl version, $Config{version}
+                           osname     TEXT,   -- from $Config{osname}
+                           osvers     TEXT,   -- $Config{osvers}
                            added TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                            );
+
+CREATE UNIQUE INDEX environment_idx ON environments (host, perlbrew);
 
 CREATE TABLE tests (
                     id INTEGER PRIMARY KEY,
