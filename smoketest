@@ -148,12 +148,16 @@ package Tester::Smoker {
         }
     };
     has 'config';
+    has 'build_dir';
     has 'minion';
+
+    use App::cpanminus::reporter;
 
     sub new {
         my $class = shift;
         my $self = $class->SUPER::new(@_);
 
+        $self->build_dir(App::cpanminus::reporter->new->build_dir);
         $self->sql->abstract(SQL::Abstract::More->new());
 
         $self->sql->migrations->name('smoker_migrations')->from_data('main', 'sqlite_migrations');
@@ -167,49 +171,55 @@ package Tester::Smoker {
         return $self;
     }
 
-    use YAML;
+    use Sys::Hostname;        # hostname() returns our fqdn, if available
+    use Config;
+
+    sub my_environment {
+        # Returns the id of our native (non-Perlbrew) environment, adding it if required
+        my $self = shift;
+
+        my $env = $self->sql->db->query('SELECT id FROM environments WHERE host=? AND perl=? AND perlbrew IS NULL',
+                                        hostname(),$Config{version})->hashes;
+        if ($env->size) {
+            return $env->first->{id};
+        } else {
+            my @args = (hostname(), @Config{qw(osname osvers version)});
+            return $self->sql->db->query('INSERT INTO environments (host, osname, osvers, perl) VALUES (?,?,?,?)',
+                                         hostname(), @Config{qw(osname osvers version)})->last_insert_id;
+        }
+    }
 
     sub update_perl_versions {
         my $self = shift;
 
-        use Sys::Hostname;
-        # hostname() returns our fqdn, if available
-
-        # Retrieve all available Perl versions
-        my @perl_versions = grep {length}
-             split(/\s*\*?\s+/, `perlbrew list`);
-
-        foreach my $v (@perl_versions) {
-            # INSERT INTO environments(host, perlbrew)
-            # VALUES ?,?
-            # hostname(), $v
-            # Newly-inserted versions get a new id; otherwise error
-
-            my $id = eval {
-                $self->sql->db->query('INSERT INTO environments(host, perlbrew) '.
-                                      'VALUES (?,?)',
-                                      hostname(), $v)->last_insert_id;
-            };
-            if (defined $id) {
-                my $version_specific = `perlbrew exec --with $v perl -MConfig -MSys::Hostname -e 'print join("\n", %Config{qw(osname osvers version)})'`;
-                # returns:  (perl-5.24.1)\n=======...===\n and results
-                if ($version_specific =~ /===\s+(.*?)\s*\z/s) {
-                    my $version_info = {split /\n/, $1};
-                    print "www";
-                    eval {
-                        $self->sql->db->query('UPDATE environments '.
-                                              'SET osname=?, osvers=?, perl=? WHERE id=?',
-                                              $version_info->@{qw(osname osvers version)}, # hash slice
-                                              $id
-                                              );
-                    };
-                    ; $DB::single = 1;
-                    print "xxx";
+        # Do we have multiple Perl versions via Perlbrew?
+        my @perl_versions = grep {length} split(/\s*\*?\s+/, `perlbrew list`);
+        if (! scalar @perl_versions) {
+            # No Perlbrew; use only native ('this') Perl build. Leave old version records.
+            $self->my_environment();
+        } else {
+            foreach my $v (@perl_versions) {
+                my $id = eval {
+                    $self->sql->db->query('INSERT INTO environments(host, perlbrew) VALUES (?,?)',
+                                          hostname(), $v)->last_insert_id;
+                };
+                if (defined $id) {
+                    # Newly-added version
+                    my $version_specific = `perlbrew exec --with $v perl -MConfig -MSys::Hostname -e 'print join("\n", %Config{qw(osname osvers version)})'`;
+                    # returns, e.g.:  (perl-5.24.1)\n===...===\n and results
+                    if ($version_specific =~ /===\s+(.*?)\s*\z/s) {
+                        my $version_info = {split /\n/, $1};
+                        eval {
+                            $self->sql->db->query('UPDATE environments '.
+                                                  'SET osname=?, osvers=?, perl=? WHERE id=?',
+                                                  $version_info->@{qw(osname osvers version)}, # hash slice
+                                                  $id
+                                                 );
+                        };
+                    }
                 }
             }
         }
-
-        
     }
 
     sub save_module_info {
@@ -238,6 +248,8 @@ package Tester::Smoker {
         }
         return undef;
     }
+
+    use YAML;
 
     sub save_regex {
         my ($self, $source) = @_;
@@ -432,16 +444,40 @@ package Tester::Smoker {
         my $args = {@_};
 
         my $module_id = $args->{module_id};
-        return 0 unless $module_id;
-        # cpanm --test-only ((FULL_URL))
-        my $results = $self->sql->db->query('SELECT name, version, relative_url FROM modules WHERE id=?', $module_id)
-        ->hashes;
+        my $env_id = $args->{environment_id};
+        my ($perlbuild, $perlbuild_id);
+
+        if (! $module_id) {
+            $self->log->error("No module_id");
+            return 0;
+        }
+
+        my $results = $self->sql->db->query('SELECT name, version, relative_url FROM modules WHERE modules.id=?',
+                                            $module_id)->hashes;
         return 0 unless defined $results;
         $results = $results->first;
 
+        if (defined $env_id) {
+            my $pb = $self->sql->db->query('SELECT id, perlbrew FROM environments WHERE id=?',
+                                           $env_id)->hashes;
+            if (defined $results) {
+                $perlbuild = $pb->first->{perlbrew};
+                $perlbuild_id = $pb->first->{id};
+                $self->log->info("Using Perlbrew $perlbuild");
+            } else {
+                $self->log->error("Can't find Perlbrew environment with id=$env_id");
+                return 0;
+            }
+        } else {
+            # Use current Perl version
+            # $^V  Perl version as 'v5.26.0'
+            $perlbuild_id = $self->my_environment();
+            $self->log->info("Using native perl");
+        }
+
         # Check against 'disabled' regex; if matches, fail with error.
         if ($self->_apply_regexes($module_id)) {  # module is disabled
-            $self->log->info("module is disabled");
+            $self->log->warn("module is disabled");
             return 0;
         } else {
             $self->log->info("Testing: (($results->{name})) (($results->{version}))");
@@ -465,57 +501,66 @@ package Tester::Smoker {
                 local $ENV{NONINTERACTIVE_TESTING} = 1;
                 local $ENV{AUTOMATED_TESTING}      = 1;
 
-            #     # cpanm will put its test reports in this directory,
-            #     # cpanm-reporter will get its input from this directory
-            #     local $ENV{PERL_CPANM_HOME} = "$function_cpanm_home/$perlbuild";
-            #     say "PERL_CPANM_HOME is:  $ENV{PERL_CPANM_HOME}" if ($verbose);
+                my $cpanm_home = Mojo::File->new($self->build_dir);
+                $cpanm_home = $cpanm_home->child($perlbuild) if defined $perlbuild;
 
-            #     my $BUILD_DIR     = $ENV{PERL_CPANM_HOME};
-            #     my $BUILD_LOGFILE = "$BUILD_DIR/build.log";
+                # cpanm will put its test reports in this directory,
+                # cpanm-reporter will get its input from this directory
+                $cpanm_home->make_path({mode => 0777});
+                local $ENV{PERL_CPANM_HOME} = $cpanm_home;
+                # say "PERL_CPANM_HOME is:  $ENV{PERL_CPANM_HOME}" if ($verbose);
+                my $BUILD_DIR     = $cpanm_home;
+                my $BUILD_LOGFILE = $cpanm_home->child('build.log');
 
-            #     unless ( -d $BUILD_DIR ) {
-            #         mkdir $BUILD_DIR;
-            #         system("chmod 777 $BUILD_DIR");
-            #     }
+                ; $DB::single = 1;
+                print "XXX";
 
-            #     say "BUILD_DIR is: $BUILD_DIR for $perlbuild"         if ($verbose);
-            #     say "BUILD_LOGFILE is: $BUILD_LOGFILE for $perlbuild" if ($verbose);
+                # Probably log these
+                # say "BUILD_DIR is: $BUILD_DIR for $perlbuild"         if ($verbose);
+                # say "BUILD_LOGFILE is: $BUILD_LOGFILE for $perlbuild" if ($verbose);
 
-            #     # isolate module name
-            #     $module = substr( $module, 0, rindex( $module, '-' ) )
-            #         if ( $module =~ /-/ );
-            #     say "module name cleared of final dash:  $module" if ($verbose);
+                # test the module, don't install it
+                my $command = '';
+                if (defined $env_id) { # use Perlbrew
+                    $command = "perlbrew exec ";
+                    $command .= "--with $perlbuild " if defined $perlbuild;
+                }
+                # Either module name (for latest version) or full URL for a specific version
+                $command .= "cpanm --test-only ";
+                if (0) {   # When exactly do we know to test a specific version?
+                    # Need to convert this to a full URI
+                    $command .= $results->{relative_url};   # use URL from modules table
+                } else {
+                    $command .= $results->{name};
+                }
+                $command .= "| tee $BUILD_LOGFILE";  # was: $test_log_home/$module.$perlbuild -- WL
 
-            #     $module = substr( $module, rindex( $module, '/' ) + 1 );
-            #     $module =~ s/-/::/g;
+                print STDERR $command . "\n";
 
-            #     # test the module, don't install it
-            #     my $command = "perlbrew exec --with $perlbuild ";
-            #     $command .= "cpanm --test-only $module ";
-            #     $command .= "| tee $test_log_home/$module.$perlbuild ";
-            #     say "about to test $module for $perlbuild" if ($verbose);
-            #     system("which perl") if ($verbose);
-            #     check_test_exit( system("$command") );
-            #     say "Should have completed testing $module for $perlbuild"
-            #         if ($verbose);
+                #     say "about to test $module for $perlbuild" if ($verbose);
+                #     system("which perl") if ($verbose);
 
-            #     # The system() command above creates a directory like
-            #     # ~/.cpanm/work/TIMESTAMP.PID e.g., 1499707240.6465
-            #     # containing:
-            #     #    build.log
-            #     #    Mojolicious-7.36   # directory name is module and version
-            #     #    " " " .tar.gz
+                #     check_test_exit( system("$command") );
+                #     say "Should have completed testing $module for $perlbuild"
+                #         if ($verbose);
 
-            #     # if ls output missing, testlog not created
-            #     # if Succ tested not found, test failed
-            #     # if Succ tested found, test passed
-            #     # rewrite this to avoid shelling out
+                #     # The system() command above creates a directory like
+                #     # ~/.cpanm/work/TIMESTAMP.PID e.g., 1499707240.6465
+                #     # containing:
+                #     #    build.log
+                #     #    Mojolicious-7.36   # directory name is module and version
+                #     #    " " " .tar.gz
 
-            #     system("echo >> tlog");
-            #     system("ls $test_log_home/$module.$perlbuild >> tlog 2>&1");
-            #     system(
-            #            "grep \'Successfully tested\' $test_log_home/$module.$perlbuild >> tlog 2>&1"
-            #           );
+                #     # if ls output missing, testlog not created
+                #     # if Succ tested not found, test failed
+                #     # if Succ tested found, test passed
+                #     # rewrite this to avoid shelling out
+
+                #     system("echo >> tlog");
+                #     system("ls $test_log_home/$module.$perlbuild >> tlog 2>&1");
+                #     system(
+                #            "grep \'Successfully tested\' $test_log_home/$module.$perlbuild >> tlog 2>&1"
+                #           );
 
                 # have test reports sent by a separate task
             };
