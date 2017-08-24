@@ -527,12 +527,15 @@ package Tester::Smoker {
                 }
                 # Either module name (for latest version) or full URL for a specific version
                 $command .= "cpanm --test-only ";
-                if (0) {   # When exactly do we know to test a specific version?
+                if (1) {   # Almost certainly want to test the specific version we asked for
                     # Need to convert this to a full URI
                     $command .= $results->{relative_url};   # use URL from modules table
                 } else {
-                    $command .= $results->{name};
+                    $command .= $results->{name};   # whatever's latest
                 }
+		# For the name of the logfile, convert '::' to '-' and suchlike
+		# Or use Mojo::Log or Log::Perl or........???
+		# Consider changing 'tee' to???
                 $command .= "| tee $BUILD_LOGFILE";  # was: $test_log_home/$module.$perlbuild -- WL
 
                 print STDERR $command . "\n";
@@ -563,6 +566,8 @@ package Tester::Smoker {
                 #           );
 
                 # have test reports sent by a separate task
+		#
+		# TODO: Save to 'test' database
             };
 
 

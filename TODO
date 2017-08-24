@@ -1,0 +1,11 @@
+2017-08-24
+
+1. make proper name for log file
+1a. ensure current URI for module-to-test
+2. create list of commands to demonstrate tests-to-be-run
+------ Meet with Bill and Ray
+3. Actually do them with --dry-run (and make that a command-line/minion_job switch)
+   -- should assume no database (and demonstate refreshing database)
+   -- get list of modules from cpan api
+   -- run at least two tests (using database)
+4. prepare for code review with Doug
