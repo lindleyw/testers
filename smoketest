@@ -238,7 +238,7 @@ package Tester::Smoker {
         my ($self, $module_name) = @_;
 
         my $ua = Mojo::UserAgent->new();
-        my $source_url = Mojo::URL->new($self->config->{metacpan_release}); # API endpoint
+        my $source_url = Mojo::URL->new($self->config->{metacpan}->{release}); # API endpoint
         push @{$source_url->path->parts}, 'CPAN';
         my $result = $ua->get($source_url);
         if ($result->res->{code} == 200) {
@@ -652,29 +652,47 @@ package Tester::Smoker {
     }
 
     sub test_metacpan {
-        my ($self) = @_;
+        my ($self, @modules) = @_;   # Optionally specify one or more modules by name
         # See also: https://github.com/metacpan/metacpan-api/blob/master/docs/API-docs.md
 
-        my $req = { 'size' => $self->{count} // 10,
-                    'fields' => [qw(name version date provides author download_url main_module)],
-                    'filter' => {'and' => [_item_list('main_module', $self->{modules}),
-                                           _item_list('author', $self->{authors}),
-                                           # TODO: Change this to _versions() above???
-                                           _item_list(['version', {term => {'status' => 'latest'}}], $self->{versions}),
-                                          ]},
-                    'query' => {
-                                _date_range( $self->{start_date}, $self->{end_date} ) },
-                    'sort' => {'date' => 'desc'},
-                  };
+        # TODO: Modify query below for named modules vs. whatever's-latest
+        # https://fastapi.metacpan.org/v1/download_url/HTTP::Tiny
+        # returns {status, version, date, download_url}
 
         my $ua = Mojo::UserAgent->new();
-        my $source_url = $self->config->{metacpan_release}; # API endpoint
-        my $modules = $ua->post($source_url => json => $req)->result;
-        my $module_list = defined ($modules) ? Mojo::JSON::decode_json($modules->body) : {};
-        my $hits = $module_list->{hits}->{hits};
+        my $source_url;
+        my $hits=[];
+
+        if (scalar @modules) {
+            # Explicitly requesting modules, always forces their test.
+            $self->{force_test} = 1;
+            $source_url = $self->config->{metacpan}->{download};
+            foreach my $module (@modules) {
+                my $req_url = Mojo::URL->new($source_url);
+                $req_url->path($req_url->path->trailing_slash(1)->merge($module));
+                my $modules = $ua->get($req_url)->result;
+                push @{$hits}, { fields => { %{$modules->json}, main_module => $module } } if defined ($modules);
+            }
+        } else {
+            $source_url = $self->config->{metacpan}->{release}; # API endpoint;
+            my $req = { 'size' => $self->{count} // 10,
+                        'fields' => [qw(name version date author download_url main_module)],  # could add:  provides
+                        'filter' => {'and' => [_item_list('main_module', $self->{modules}),
+                                               _item_list('author', $self->{authors}),
+                                               # TODO: Change this to _versions() above???
+                                               _item_list(['version', {term => {'status' => 'latest'}}], $self->{versions}),
+                                              ]},
+                        'query' => { # optional range, otherwise 'all'
+                                    _date_range( $self->{start_date}, $self->{end_date} ) },
+                        'sort' => {'date' => 'desc'},
+                      };
+            # NOTE: $module->{fields}->{provides} if used, would contain a list of provided (sub)modules
+            my $modules = $ua->post($source_url => json => $req)->result;
+            my $module_list = defined ($modules) ? Mojo::JSON::decode_json($modules->body) : {};
+            $hits = $module_list->{hits}->{hits};
+        }
 
         foreach my $module (@{$hits}) {
-            # NOTE: There is a list of provided (sub)modules, in: $module->{fields}->{provides};
             my $id = eval {
                 $self->sql->db->query('INSERT INTO modules(name, version, released, author, relative_url) '.
                                       'VALUES (?,?,?,?,?)',
