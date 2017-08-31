@@ -666,7 +666,7 @@ package Tester::Smoker {
         if (scalar @modules) {
             # Explicitly requesting modules, always forces their test.
             $self->{force_test} = 1;
-            $source_url = $self->config->{metacpan}->{download};
+            $source_url = $self->config->{metacpan}->{module};
             foreach my $module (@modules) {
                 my $req_url = Mojo::URL->new($source_url);
                 $req_url->path($req_url->path->trailing_slash(1)->merge($module));
