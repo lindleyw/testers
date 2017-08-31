@@ -692,6 +692,8 @@ package Tester::Smoker {
             $hits = $module_list->{hits}->{hits};
         }
 
+        ; $DB::single = 1;
+
         foreach my $module (@{$hits}) {
             my $id = eval {
                 $self->sql->db->query('INSERT INTO modules(name, version, released, author, relative_url) '.
@@ -871,7 +873,8 @@ helper smoker => sub {
     'a|author=s'  => \my @authors,
     'module=s'    => \my @modules,
     'r|recent=i'  => \my $freshness,  # in days
-    'rev|revision=s' => \my @versions,  # probably should change meaning of 'count'
+    'rev|revision|version=s' => \my @versions,  # probably should change meaning of 'count'
+    'perl=s'      => \my @perl_versions,  # probably should change meaning of 'count'
     'c|count=i'   => \my $count,
     'start|start_date=s', \my $start_date,
     'end|end_date=s', \my $end_date,
@@ -887,6 +890,7 @@ helper smoker => sub {
                                         authors  => \@authors,
                                         modules  => \@modules,
                                         versions => \@versions,
+                                        perl_versions => \@perl_versions,
                                         recent   => $freshness,
                                         start_date => $start_date,
                                         end_date => $end_date,
