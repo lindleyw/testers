@@ -141,6 +141,7 @@ package Tester::Smoker {
     has 'database';
     has 'rebuild';     # Flag to rebuild database.  Useful for debugging or reprovisioning
     has 'log';
+    has 'verbose';
     has 'sql' => sub { # Set during instantiation; or, create object
         my ($self) = @_;
         if (defined $self->database) {
@@ -480,7 +481,8 @@ package Tester::Smoker {
             $self->log->warn("module is disabled");
             return 0;
         } else {
-            $self->log->info("Testing: (($results->{name})) (($results->{version}))");
+            my $module = $results->{name};
+            $self->log->info("Testing: (($module)) (($results->{version}))");
             # actually test the module
 
             # May want to re-introduce timeout
@@ -501,70 +503,71 @@ package Tester::Smoker {
                 local $ENV{NONINTERACTIVE_TESTING} = 1;
                 local $ENV{AUTOMATED_TESTING}      = 1;
 
-                my $cpanm_home = Mojo::File->new($self->build_dir);
-                $cpanm_home = $cpanm_home->child($perlbuild) if defined $perlbuild;
-
-                # cpanm will put its test reports in this directory,
-                # cpanm-reporter will get its input from this directory
-                $cpanm_home->make_path({mode => 0777});
-                local $ENV{PERL_CPANM_HOME} = $cpanm_home;
-                # say "PERL_CPANM_HOME is:  $ENV{PERL_CPANM_HOME}" if ($verbose);
-                my $BUILD_DIR     = $cpanm_home;
-                my $BUILD_LOGFILE = $cpanm_home->child('build.log');
-
-                ; $DB::single = 1;
-                print "XXX";
-
-                # Probably log these
-                # say "BUILD_DIR is: $BUILD_DIR for $perlbuild"         if ($verbose);
-                # say "BUILD_LOGFILE is: $BUILD_LOGFILE for $perlbuild" if ($verbose);
-
                 # test the module, don't install it
                 my $command = '';
                 if (defined $env_id) { # use Perlbrew
                     $command = "perlbrew exec ";
                     $command .= "--with $perlbuild " if defined $perlbuild;
                 }
+
+                # After selecting which if any Perlbrew version,
+                # remember which Perl version we actually used.
+                my $cpanm_home = Mojo::File->new($self->build_dir);
+                $perlbuild = 'perl-'.$Config{version} unless defined $perlbuild;
+                $cpanm_home = $cpanm_home->child($perlbuild);
+
+                # cpanm will put its test reports in this directory,
+                # cpanm-reporter will get its input from this directory
+                $cpanm_home->make_path({mode => 0777});
+                local $ENV{PERL_CPANM_HOME} = $cpanm_home;
+                # say "PERL_CPANM_HOME is:  $ENV{PERL_CPANM_HOME}" if ($self->verbose);
+                my $BUILD_DIR     = $cpanm_home;
+                my $BUILD_LOGFILE = $cpanm_home->child('build.log');
+
+                if ($self->verbose) {
+                    $self->log->info("BUILD_DIR is: $BUILD_DIR for $perlbuild");
+                    $self->log->info("BUILD_LOGFILE is: $BUILD_LOGFILE for $perlbuild");
+                }
+
                 # Either module name (for latest version) or full URL for a specific version
                 $command .= "cpanm --test-only ";
-                if (1) {   # Almost certainly want to test the specific version we asked for
-                    # Need to convert this to a full URI
-                    $command .= $results->{relative_url};   # use URL from modules table
-                } else {
-                    $command .= $results->{name};   # whatever's latest
+
+                # Test the specific version we asked for
+                # 'relative_url' will actually be full URI at this point
+                my $tested_module = Mojo::URL->new($results->{relative_url});
+                $command .= $tested_module;   # use URL from modules table
+                # We will search for this once test is complete
+                my $test_log_path = $tested_module->path->parts->[-1];
+
+		# Q: Do we need this at all?  Or: Consider changing 'tee' to…?
+                # $command .= "| tee $BUILD_LOGFILE";  # was: $test_log_home/$module.$perlbuild -- WL
+
+                if ($self->verbose) {
+                    $self->log->info("Testing $module for $perlbuild.");
+                    $self->log->info("Command is:  $command");
                 }
-		# For the name of the logfile, convert '::' to '-' and suchlike
-		# Or use Mojo::Log or Log::Perl or........???
-		# Consider changing 'tee' to???
-                $command .= "| tee $BUILD_LOGFILE";  # was: $test_log_home/$module.$perlbuild -- WL
 
-                print STDERR $command . "\n";
+                $self->check_test_exit( system("$command") );
+                say "Should have completed testing $module for $perlbuild"
+                    if ($self->verbose);
+                    
+                # The system() command above creates a directory like
+                # ~/.cpanm/work/TIMESTAMP.PID e.g., 1499707240.6465
+                # containing:
+                #    build.log
+                #    Mojolicious-7.36   # directory name is module and version
+                #    " " " .tar.gz
 
-                #     say "about to test $module for $perlbuild" if ($verbose);
-                #     system("which perl") if ($verbose);
+                # ; $DB::single = 1;
+                # print "XXX";
 
-                #     check_test_exit( system("$command") );
-                #     say "Should have completed testing $module for $perlbuild"
-                #         if ($verbose);
-
-                #     # The system() command above creates a directory like
-                #     # ~/.cpanm/work/TIMESTAMP.PID e.g., 1499707240.6465
-                #     # containing:
-                #     #    build.log
-                #     #    Mojolicious-7.36   # directory name is module and version
-                #     #    " " " .tar.gz
-
-                #     # if ls output missing, testlog not created
-                #     # if Succ tested not found, test failed
-                #     # if Succ tested found, test passed
-                #     # rewrite this to avoid shelling out
-
-                #     system("echo >> tlog");
-                #     system("ls $test_log_home/$module.$perlbuild >> tlog 2>&1");
-                #     system(
-                #            "grep \'Successfully tested\' $test_log_home/$module.$perlbuild >> tlog 2>&1"
-                #           );
-
+                # Locate the log file just created
+                my $logfiles = $cpanm_home->list_tree->grep(sub { /$test_log_path\z/ });
+                state $check_timestamp = sub { my $p = shift; $p->path->dirname =~ m{(\d+)\.\d+\z} ? $1 : undef };
+                # Find the directory containing the build.log which was just created.
+                my $latest_log_dir = $logfiles->sort(sub{$check_timestamp->($a) <=> $check_timestamp->($b)})
+                    ->last->dirname;
+                $self->log->info("build.log for $tested_module in $latest_log_dir");
                 # have test reports sent by a separate task
 		#
 		# TODO: Save to 'test' database
@@ -574,6 +577,31 @@ package Tester::Smoker {
 
             # ...save result
         }
+
+        sub check_test_exit {
+            my ($self, $exit) = @_;
+            if ( $exit == -1 ) {
+                $self->log->error ("test failed to execute: $!");
+            } elsif ( $exit & 127 ) {
+                $self->log->error( sprintf("test child died with signal %d, %s coredump\n",
+                    ( $exit & 127 ), ( $exit & 128 ) ? 'with' : 'without'));
+            } else {
+                $self->log->info(sprintf("test child exited with value %d\n", $exit >> 8));
+            }
+        }
+
+        sub check_reporter_exit {
+            my ($self, $exit) = @_;
+            if ( $exit == -1 ) {
+                say "reporter failed to execute: $!";
+            } elsif ( $exit & 127 ) {
+                printf "reporter child died with signal %d, %s coredump\n",
+                    ( $exit & 127 ), ( $exit & 128 ) ? 'with' : 'without';
+            } else {
+                printf "reporter child exited with value %d\n", $exit >> 8;
+            }
+        }
+
     }
 
     ################################################################
