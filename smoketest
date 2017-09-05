@@ -442,6 +442,7 @@ package Tester::Smoker {
 
     sub test {
         my $self = shift;
+        my $minion_job = shift;
         my $args = {@_};
 
         my $module_id = $args->{module_id};
@@ -467,6 +468,7 @@ package Tester::Smoker {
                 $self->log->info("Using Perlbrew $perlbuild");
             } else {
                 $self->log->error("Can't find Perlbrew environment with id=$env_id");
+                $minion_job->fail("Can't find Perlbrew environment with id=$env_id");
                 return 0;
             }
         } else {
@@ -479,6 +481,7 @@ package Tester::Smoker {
         # Check against 'disabled' regex; if matches, fail with error.
         if ($self->_apply_regexes($module_id)) {  # module is disabled
             $self->log->warn("module is disabled");
+            $minion_job->fail("module is disabled");
             return 0;
         } else {
             my $module = $results->{name};
@@ -568,9 +571,20 @@ package Tester::Smoker {
                 my $latest_log_dir = $logfiles->sort(sub{$check_timestamp->($a) <=> $check_timestamp->($b)})
                     ->last->dirname;
                 $self->log->info("build.log for $tested_module in $latest_log_dir");
-                # have test reports sent by a separate task
+
+                # Enqueue the report to be sent later
+                $self->minion->enqueue(report => [module => $module,
+                                                  perlbuild => $perlbuild,
+                                                  command => $command,
+                                                  tested_module => $tested_module,
+                                                  test_log_path => $test_log_path,
+                                                  logfile_dir => $latest_log_dir,
+                                                 ]);
+                
 		#
 		# TODO: Save to 'test' database
+                #
+                $minion_job->finish("build.log for $tested_module in $latest_log_dir");
             };
 
 
@@ -941,7 +955,7 @@ helper db => sub {
 ################
 
 app->minion->add_task( test => sub { my ($job, @args) = @_;
-                                     $job->app->smoker->test(@args);
+                                     $job->app->smoker->test($job, @args);
                                      # probably call $job->finished($message) or $job->fail($message)
                                    } );
 
