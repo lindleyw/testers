@@ -8,7 +8,6 @@ use Mojo::File;
 use Mojo::UserAgent;
 use Mojo::DOM;
 use List::Util qw(pairs);
-use Capture::Tiny ':all';
 use v5.22;
 use strict;
 use warnings;
@@ -67,7 +66,10 @@ sub enable_recent {
 # Fetch https://st.aticpan.org/source/ANDK/CPAN-2.16/distroprefs/01.DISABLED.yml
 
 package cpan_wrapper {
+
     use CPAN;           # Must be inside a module, not the main program, because we don't want to *run* cpan!
+    use Capture::Tiny ':all';
+
     sub version {
         return $CPAN::VERSION;
     }
@@ -77,7 +79,8 @@ package cpan_wrapper {
         # Return the stdout and stderr logs.
         # NOTE: CPAN::Shell->test(...) calls its function rematein(...) which
         # does not return any useful value.
-        my ($stdout, $stderr, @result) = capture { CPAN::Shell->test ( @_ ) };
+        my @args = @_;
+        my ($stdout, $stderr, @result) = eval { capture { CPAN::Shell->test ( @args ) } };
         return ($stdout, $stderr);
     }
 
@@ -465,180 +468,209 @@ package Tester::Smoker {
             return 0;
         }
 
-        my $results = $self->sql->db->query('SELECT name, version, relative_url FROM modules WHERE modules.id=?',
+        my $module_info = $self->sql->db->query('SELECT name, version, author, relative_url FROM modules WHERE modules.id=?',
                                             $module_id)->hashes;
-        return 0 unless defined $results;
-        $results = $results->first;
+        return 0 unless defined $module_info;
+        $module_info = $module_info->first;
 
         # Check against 'disabled' regex; if matches, fail with error.
         if ($self->_apply_regexes($module_id)) {  # module is disabled
             $self->log->warn("module is disabled");
             $minion_job->fail("module is disabled");
             return 0;
-        } else {
-            my $module = $results->{name};
-            $self->log->info("Testing: (($module)) (($results->{version}))");  # TODO: Add minion job number
-            # actually test the module
+        }
 
-            # next two variable settings are explained in this link
-            ### http://www.dagolden.com/index.php/2098/the-annotated-lancaster-consensus
-            local $ENV{NONINTERACTIVE_TESTING} = 1;
-            local $ENV{AUTOMATED_TESTING}      = 1;
+        $module_info->{relative_url} =~ m{/([^/]+?)\z};
 
-            # May want to re-introduce timeout
+        # ; $DB::single = 1;
 
+        my $module_specific = $1;
+        return 0 unless defined $module_specific;
 
-            if (!defined $env_id) { # use currently installed version
-                # $^V  Perl version as 'v5.26.0'
-                $perlbuild_id = $self->my_environment();
-                $self->log->info("Using native perl");   # TODO: Add minion job number
+        my $module = $module_info->{name};
+        $self->log->info("Testing: (($module)) (($module_info->{version}))");  # TODO: Add minion job number
 
-                # TODO:  Consider just using cpan_wrapper::run_test($MODULE) and saving results into database
-                ; $DB::single = 1;
-                my ($log_stdout, $log_stderr) = cpan_wrapper::run_test();
+        # actually test the module
 
+        # next two variable settings are explained in this link
+        ### http://www.dagolden.com/index.php/2098/the-annotated-lancaster-consensus
+        local $ENV{NONINTERACTIVE_TESTING} = 1;
+        local $ENV{AUTOMATED_TESTING}      = 1;
+
+        # Test the specific version we asked for
+        # 'relative_url' will actually be full URI at this point
+        my $tested_module = Mojo::URL->new($module_info->{relative_url});
+        my $command;
+
+        my ($build_log, $build_error_log);
+
+        # NOTE: Without the following, for some reason, Minion fails with
+        # »DBD::SQLite::db prepare_cached failed: no such table: minion_jobs at Minion/Backend/SQLite.pm line 287«
+        $minion_job->note(build_log => undef,   # Remove any previous logs remaining when
+                          error_log => undef,   # retrying a failed job
+                         );
+
+        if (!defined $env_id) { # use currently installed version
+            # $^V  Perl version as 'v5.26.0'
+            $perlbuild_id = $self->my_environment();
+            $self->log->info("Using native perl");   # TODO: Add minion job number
+
+            # setup to handle signals
+            local $SIG{'HUP'}  = sub { say "Got hang up" };
+            local $SIG{'INT'}  = sub { say "Got interrupt" };
+            local $SIG{'STOP'} = sub { say "Stopped" };
+            local $SIG{'TERM'} = sub { say "Got term" };
+            local $SIG{'KILL'} = sub { say "Got kill" };
+
+            # this one won't work with apostrophes like above
+            local $SIG{__DIE__} = sub { say "Got die" };
+
+            # Q: How to introduce timeout here?
+            ($build_log, $build_error_log) = cpan_wrapper::run_test(join('/',
+                                                                         $module_info->{author},
+                                                                             $module_specific));
                 
-            } else {  # use Perlbrew
-                my $pb = $self->sql->db->query('SELECT id, perlbrew FROM environments WHERE id=?',
-                                               $env_id)->hashes;
-                if (defined $results) {
-                    $perlbuild = $pb->first->{perlbrew};
-                    $perlbuild_id = $pb->first->{id};
-                    $self->log->info("Using Perlbrew $perlbuild");
-                } else {
-                    $self->log->error("Can't find Perlbrew environment with id=$env_id");
-                    $minion_job->fail("Can't find Perlbrew environment with id=$env_id");
-                    return 0;
+        } else {  # use Perlbrew
+            my $pb = $self->sql->db->query('SELECT id, perlbrew FROM environments WHERE id=?',
+                                           $env_id)->hashes;
+            if (defined $pb) {
+                $perlbuild = $pb->first->{perlbrew};
+                $perlbuild_id = $pb->first->{id};
+                $self->log->info("Using Perlbrew $perlbuild");
+            } else {
+                $self->log->error("Can't find Perlbrew environment with id=$env_id");
+                $minion_job->fail("Can't find Perlbrew environment with id=$env_id");
+                return 0;
+            }
+
+            eval {
+                # setup to handle signals
+                local $SIG{'HUP'}  = sub { say "Got hang up" };
+                local $SIG{'INT'}  = sub { say "Got interrupt" };
+                local $SIG{'STOP'} = sub { say "Stopped" };
+                local $SIG{'TERM'} = sub { say "Got term" };
+                local $SIG{'KILL'} = sub { say "Got kill" };
+
+                # this one won't work with apostrophes like above
+                local $SIG{__DIE__} = sub { say "Got die" };
+                
+                # XXX: What we want is:
+                # » use CPAN; $result = CPAN::Shell->test('AUTHOR/Foo-Bar-1.23.4.tar.gz') «
+                # but note that this seems to fail downloading from cpan.org/authors/id/A/AU/AUTHOR/...
+                # in most cases. Also that repository seems to only retain a relatively few old versions.
+                # — WL 2017-09-18
+
+                # test the module, don't install it
+                $command = "perlbrew exec ";
+                $command .= "--with $perlbuild " if defined $perlbuild;
+
+                # After selecting which if any Perlbrew version,
+                # remember which Perl version we actually used.
+                my $cpanm_home = Mojo::File->new($self->build_dir);
+                $perlbuild = 'perl-'.$Config{version} unless defined $perlbuild;
+                $cpanm_home = $cpanm_home->child($perlbuild);
+
+                # cpanm will put its test reports in this directory,
+                # cpanm-reporter will get its input from this directory
+                $cpanm_home->make_path({mode => 0777});
+                local $ENV{PERL_CPANM_HOME} = $cpanm_home;
+                # say "PERL_CPANM_HOME is:  $ENV{PERL_CPANM_HOME}" if ($self->verbose);
+                my $BUILD_DIR     = $cpanm_home;
+                my $BUILD_LOGFILE = $cpanm_home->child('build.log');
+
+                if ($self->verbose) {
+                    $self->log->info("BUILD_DIR is: $BUILD_DIR for $perlbuild");
+                    $self->log->info("BUILD_LOGFILE is: $BUILD_LOGFILE for $perlbuild");
                 }
 
-                eval {
-                    # setup to handle signals
-                    local $SIG{'HUP'}  = sub { say "Got hang up" };
-                    local $SIG{'INT'}  = sub { say "Got interrupt" };
-                    local $SIG{'STOP'} = sub { say "Stopped" };
-                    local $SIG{'TERM'} = sub { say "Got term" };
-                    local $SIG{'KILL'} = sub { say "Got kill" };
+                # Either module name (for latest version) or full URL for a specific version
+                $command .= "cpanm --test-only ";
 
-                    # this one won't work with apostrophes like above
-                    local $SIG{__DIE__} = sub { say "Got die" };
+                $command .= $tested_module;   # use URL from modules table
+                # We will search for this once test is complete
+                my $test_log_path = $tested_module->path->parts->[-1];
 
-                    # XXX: What we want is:
-                    # » use CPAN; $result = CPAN::Shell->test('AUTHOR/Foo-Bar-1.23.4.tar.gz') «
-                    # but note that this seems to fail downloading from cpan.org/authors/id/A/AU/AUTHOR/...
-                    # in most cases. Also that repository seems to only retain a relatively few old versions.
-                    # — WL 2017-09-18
+                # Q: Do we need this at all?  Or: Consider changing 'tee' to…?
+                # $command .= "| tee $BUILD_LOGFILE";  # was: $test_log_home/$module.$perlbuild -- WL
 
-                    # test the module, don't install it
-                    my $command = '';
-                    $command = "perlbrew exec ";
-                    $command .= "--with $perlbuild " if defined $perlbuild;
+                if ($self->verbose) {
+                    $self->log->info("Testing $module for $perlbuild.");
+                    $self->log->info("Command is:  $command");
+                }
 
-                    # After selecting which if any Perlbrew version,
-                    # remember which Perl version we actually used.
-                    my $cpanm_home = Mojo::File->new($self->build_dir);
-                    $perlbuild = 'perl-'.$Config{version} unless defined $perlbuild;
-                    $cpanm_home = $cpanm_home->child($perlbuild);
-
-                    # cpanm will put its test reports in this directory,
-                    # cpanm-reporter will get its input from this directory
-                    $cpanm_home->make_path({mode => 0777});
-                    local $ENV{PERL_CPANM_HOME} = $cpanm_home;
-                    # say "PERL_CPANM_HOME is:  $ENV{PERL_CPANM_HOME}" if ($self->verbose);
-                    my $BUILD_DIR     = $cpanm_home;
-                    my $BUILD_LOGFILE = $cpanm_home->child('build.log');
-
-                    if ($self->verbose) {
-                        $self->log->info("BUILD_DIR is: $BUILD_DIR for $perlbuild");
-                        $self->log->info("BUILD_LOGFILE is: $BUILD_LOGFILE for $perlbuild");
-                    }
-
-                    # Either module name (for latest version) or full URL for a specific version
-                    $command .= "cpanm --test-only ";
-
-                    # Test the specific version we asked for
-                    # 'relative_url' will actually be full URI at this point
-                    my $tested_module = Mojo::URL->new($results->{relative_url});
-                    $command .= $tested_module;   # use URL from modules table
-                    # We will search for this once test is complete
-                    my $test_log_path = $tested_module->path->parts->[-1];
-
-                    # Q: Do we need this at all?  Or: Consider changing 'tee' to…?
-                    # $command .= "| tee $BUILD_LOGFILE";  # was: $test_log_home/$module.$perlbuild -- WL
-
-                    if ($self->verbose) {
-                        $self->log->info("Testing $module for $perlbuild.");
-                        $self->log->info("Command is:  $command");
-                    }
-
-                    $self->check_test_exit( system("$command") );
-                    say "Should have completed testing $module for $perlbuild"
-                    if ($self->verbose);
+                $self->check_test_exit( system("$command") );
+                say "Should have completed testing $module for $perlbuild"
+                if ($self->verbose);
                     
-                    # The system() command above creates a directory like
-                    # ~/.cpanm/work/TIMESTAMP.PID e.g., 1499707240.6465
-                    # containing:
-                    #    build.log
-                    #    Mojolicious-7.36   # directory name is module and version
-                    #    " " " .tar.gz
+                # The system() command above creates a directory like
+                # ~/.cpanm/work/TIMESTAMP.PID e.g., 1499707240.6465
+                # containing:
+                #    build.log
+                #    Mojolicious-7.36   # directory name is module and version
+                #    " " " .tar.gz
 
-                    # ; $DB::single = 1;
-                    # print "XXX";
+                # print "XXX";
 
-                    # Locate the log file just created
-                    my $logfiles = $cpanm_home->list_tree->grep(sub { /$test_log_path\z/ });
-                    state $check_timestamp = sub { my $p = shift; $p->path->dirname =~ m{(\d+)\.\d+\z} ? $1 : undef };
-                    # Find the directory containing the build.log which was just created.
-                    my $latest_log_dir = $logfiles->sort(sub{$check_timestamp->($a) <=> $check_timestamp->($b)})
-                    ->last->dirname;
-                    $self->log->info("build.log for $tested_module in $latest_log_dir");
-                    # XXX: Above stanza is incomplete. Replace with code using Capture::Tiny
+                # Locate the log file just created
+                my $logfiles = $cpanm_home->list_tree->grep(sub { /$test_log_path\z/ });
+                state $check_timestamp = sub { my $p = shift; $p->path->dirname =~ m{(\d+)\.\d+\z} ? $1 : undef };
+                # Find the directory containing the build.log which was just created.
+                my $latest_log_dir = $logfiles->sort(sub{$check_timestamp->($a) <=> $check_timestamp->($b)})
+                ->last->dirname;
+                $self->log->info("build.log for $tested_module in $latest_log_dir");
+                # XXX: Above stanza is incomplete. Replace with code using Capture::Tiny
 
-                    # Enqueue the report to be sent later
-                    $self->minion->enqueue(report => [module => $module,
-                                                      perlbuild => $perlbuild,
-                                                      command => $command,
-                                                      tested_module => $tested_module,
-                                                      test_log_path => $test_log_path,
-                                                      logfile_dir => $latest_log_dir,
-                                                     ]);
-                
-                    #
-                    # TODO: Save to 'test' database
-                    #
-                    $minion_job->finish("build.log for $tested_module in $latest_log_dir");
-                };
-
-
-            }
-
-
-            # ...save result
+            };  # end of eval{}
+            # end of Perlbrew logic
         }
 
-        sub check_test_exit {
-            my ($self, $exit) = @_;
-            if ( $exit == -1 ) {
-                $self->log->error ("test failed to execute: $!");
-            } elsif ( $exit & 127 ) {
-                $self->log->error( sprintf("test child died with signal %d, %s coredump\n",
-                    ( $exit & 127 ), ( $exit & 128 ) ? 'with' : 'without'));
-            } else {
-                $self->log->info(sprintf("test child exited with value %d\n", $exit >> 8));
-            }
-        }
+        ; $DB::single = 1;
 
-        sub check_reporter_exit {
-            my ($self, $exit) = @_;
-            if ( $exit == -1 ) {
-                say "reporter failed to execute: $!";
-            } elsif ( $exit & 127 ) {
-                printf "reporter child died with signal %d, %s coredump\n",
-                    ( $exit & 127 ), ( $exit & 128 ) ? 'with' : 'without';
-            } else {
-                printf "reporter child exited with value %d\n", $exit >> 8;
-            }
-        }
+        $minion_job->note(build_log => $build_log,
+                          error_log => $build_error_log
+                         );
 
+        $minion_job->finish("Ran test for $tested_module");
+
+        #
+        # TODO: Save to 'test' database
+        #
+
+        # Enqueue the report to be sent later
+        $self->minion->enqueue(report => [module => $module,
+                                          perlbuild => $perlbuild,
+                                          (defined $command) ? (command => $command) : (),
+                                          tested_module => $tested_module,
+                                          # test_log_path => $test_log_path,
+                                          # logfile_dir => $latest_log_dir,
+                                         ]);
+
+    }
+
+    ################
+
+    sub check_test_exit {
+        my ($self, $exit) = @_;
+        if ( $exit == -1 ) {
+            $self->log->error ("test failed to execute: $!");
+        } elsif ( $exit & 127 ) {
+            $self->log->error( sprintf("test child died with signal %d, %s coredump\n",
+                                       ( $exit & 127 ), ( $exit & 128 ) ? 'with' : 'without'));
+        } else {
+            $self->log->info(sprintf("test child exited with value %d\n", $exit >> 8));
+        }
+    }
+
+    sub check_reporter_exit {
+        my ($self, $exit) = @_;
+        if ( $exit == -1 ) {
+            say "reporter failed to execute: $!";
+        } elsif ( $exit & 127 ) {
+            printf "reporter child died with signal %d, %s coredump\n",
+            ( $exit & 127 ), ( $exit & 128 ) ? 'with' : 'without';
+        } else {
+            printf "reporter child exited with value %d\n", $exit >> 8;
+        }
     }
 
     ################################################################
@@ -839,7 +871,6 @@ package main::Command::list {
                                                            task => 'test',
                                                           }
                                                          );
-        ; $DB::single = 1;
         print Mojo::Util::tablify [ [qw/Job Status Module Version Author/],
                                     map {
                                         if ( $_->{args}[0] eq 'module_id' ) {
