@@ -504,8 +504,9 @@ package Tester::Smoker {
 
         my ($build_log, $build_error_log);
 
-        # NOTE: Without the following, for some reason, Minion fails with
-        # »DBD::SQLite::db prepare_cached failed: no such table: minion_jobs at Minion/Backend/SQLite.pm line 287«
+        # XXX: Without the following, for some reason, Minion fails with
+        # »DBD::SQLite::db prepare_cached failed: no such table: minion_jobs
+        # at Minion/Backend/SQLite.pm line 287«
         $minion_job->note(build_log => undef,   # Remove any previous logs remaining when
                           error_log => undef,   # retrying a failed job
                          );
@@ -528,7 +529,7 @@ package Tester::Smoker {
             # Q: How to introduce timeout here?
             ($build_log, $build_error_log) = cpan_wrapper::run_test(join('/',
                                                                          $module_info->{author},
-                                                                             $module_specific));
+                                                                         $module_specific));
                 
         } else {  # use Perlbrew
             my $pb = $self->sql->db->query('SELECT id, perlbrew FROM environments WHERE id=?',
@@ -598,18 +599,16 @@ package Tester::Smoker {
                     $self->log->info("Command is:  $command");
                 }
 
-                $self->check_test_exit( system("$command") );
-                say "Should have completed testing $module for $perlbuild"
-                if ($self->verbose);
+                # TODO: Wrap the system() call in a capture { ... } block but also regard the exit code
+                $self->check_exit( system("$command", 'test') );
+                $self->log->info("Tested $module for $perlbuild");  # TODO: append exit code?
                     
-                # The system() command above creates a directory like
+                # NOTE: The system() command above creates a directory like
                 # ~/.cpanm/work/TIMESTAMP.PID e.g., 1499707240.6465
                 # containing:
                 #    build.log
                 #    Mojolicious-7.36   # directory name is module and version
                 #    " " " .tar.gz
-
-                # print "XXX";
 
                 # Locate the log file just created
                 my $logfiles = $cpanm_home->list_tree->grep(sub { /$test_log_path\z/ });
@@ -624,8 +623,7 @@ package Tester::Smoker {
             # end of Perlbrew logic
         }
 
-        ; $DB::single = 1;
-
+        # XXX: If the ->note() method is not called above, this fails?
         $minion_job->note(build_log => $build_log,
                           error_log => $build_error_log
                          );
@@ -634,13 +632,16 @@ package Tester::Smoker {
 
         #
         # TODO: Save to 'test' database
-        #
+        # NOTE: Probably want to determine test results (using code from
+        # e.g., CPAN::Reporter) before saving to our test database...?
 
-        # Enqueue the report to be sent later
+        # Enqueue the report to be processed and sent later
         $self->minion->enqueue(report => [module => $module,
+                                          module_id => $module_id,
                                           perlbuild => $perlbuild,
                                           (defined $command) ? (command => $command) : (),
                                           tested_module => $tested_module,
+                                          minion_job => $minion_job->info->{id},
                                           # test_log_path => $test_log_path,
                                           # logfile_dir => $latest_log_dir,
                                          ]);
@@ -649,27 +650,15 @@ package Tester::Smoker {
 
     ################
 
-    sub check_test_exit {
-        my ($self, $exit) = @_;
+    sub check_exit {
+        my ($self, $exit, $what) = @_;
         if ( $exit == -1 ) {
-            $self->log->error ("test failed to execute: $!");
+            $self->log->error ("$what failed to execute: $!");
         } elsif ( $exit & 127 ) {
-            $self->log->error( sprintf("test child died with signal %d, %s coredump\n",
+            $self->log->error( sprintf("$what child died with signal %d, %s coredump\n",
                                        ( $exit & 127 ), ( $exit & 128 ) ? 'with' : 'without'));
         } else {
-            $self->log->info(sprintf("test child exited with value %d\n", $exit >> 8));
-        }
-    }
-
-    sub check_reporter_exit {
-        my ($self, $exit) = @_;
-        if ( $exit == -1 ) {
-            say "reporter failed to execute: $!";
-        } elsif ( $exit & 127 ) {
-            printf "reporter child died with signal %d, %s coredump\n",
-            ( $exit & 127 ), ( $exit & 128 ) ? 'with' : 'without';
-        } else {
-            printf "reporter child exited with value %d\n", $exit >> 8;
+            $self->log->info(sprintf("$what child exited with value %d\n", $exit >> 8));
         }
     }
 
