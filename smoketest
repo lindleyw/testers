@@ -22,41 +22,6 @@ use warnings;
 
 # ./smoketest module --author PREACTION --count 5 --start_date=2012-07-01 --end_date=2012-12-30 -v -f
 
-sub enable_recent {
-    # Get the list of most recently updated modules from source; default to
-    # http://cpan.cpantesters.org/modules/01modules.mtime.html
-    my ($self, $info, $source) = @_;
-
-    my $source_url = Mojo::URL->new($source // $self->app->config->{cpan_testers} );
-    push @{$source_url->path->parts},
-         'modules',
-         $self->app->config->{cpan_recent} // '01modules.mtime.html';
-
-    my $ua = Mojo::UserAgent->new();
-    my $module_dom = $ua->get($source_url)->result->dom;
-
-    # Create a list of modules
-    my $modules = _dom_extract($module_dom->find('a[href$=".tar.gz"]'));
-
-    $modules->each(sub { $self->app->db
-                         ->query('INSERT OR REPLACE INTO modules(name, version, released, author, relative_url) '.
-                                 'VALUES (?,?,?,?,?)',
-                                 $_->{name}, $_->{version}, $_->{released}, $_->{author}, $_->{relative_url});
-                     });
-
-    # Convert list to a regex which selects exactly those modules
-    my $regex = "^(?x:\n.^  # never matches, only purpose is to let things align nicely\n" .
-      '    # Recent modules list from ' . $source_url . "\n    |".
-      $modules->map( sub { $_->{name} . '  # Version ' . $_->{version} . '  ' . $_->{released} })->join("\n   |")     
-      . "\n)";
-    # Save regex in module_flags table
-    my $saved = $self->app->db->query('INSERT OR REPLACE INTO module_flags (priority, origin, author, disable, regex) '.
-                                      'VALUES (?,?,?,?,?)',
-                                      $info->{priority}, $info->{reason}, $info->{author}, $info->{disabled} // 0, $regex
-                                     );
-    return 1;
-}
-
 ################################################################
 
 # Find CPAN in the list of modules (it's currently under ANDK's directory)
@@ -264,6 +229,161 @@ package Tester::Smoker {
         return undef;
     }
 
+    ################################################################
+
+
+    # use Date::Parse;
+    my %months = (jan=>1,feb=>2,mar=>3,apr=>4,may=>5,jun=>6,jul=>7,aug=>8,sep=>9,oct=>10,nov=>11,dec=>12);
+
+    sub _dom_extract {
+        my $module_tgzs = shift;
+
+        my @modules;
+        $module_tgzs->each( sub {
+                                my $module_node = shift;
+                                my $module_info = {};
+                                @{$module_info}{qw(author name version)} = ( $module_node->attr('href') =~ # from the URL,
+                                                                             m{(\w+)/([^/]+?)-?v?([0-9a-z.]+)?\.tar\.gz}
+                                                                           ); # Extract into hash slice
+                                $module_info->{name} =~ s/-/::/g;
+
+                                # Extract content and remove any leading whitespace
+                                my $module_info_text = $module_node->next_node->content =~ s/\A\s+//r =~ s/\s+\z//r;
+                                ($module_info->{size}, my $m_day, my $m_mon, my $m_year) = split(/\s+/, $module_info_text, 4);
+                                # Convert human units to octets:
+                                $module_info->{size} =~ s/^([0-9.])+([kM])/$1*({k=>1024,M=>1024*1024}->{$2})/e;
+                                # use Date::Parse and do str2time() of
+                                # date for epoch timestamp, or simply
+                                # put into format SQLite understands:
+                                $module_info->{released} = sprintf('%4d-%02d-%02d', $m_year, $months{lc($m_mon)}, $m_day);
+                                push @modules, $module_info;
+                            } );
+        return Mojo::Collection->new(@modules);
+    }
+
+    sub enable_recent {
+      # Get the list of most recently updated modules from source; default to
+      # http://cpan.cpantesters.org/modules/01modules.mtime.html
+      my ($self, $info, $source) = @_;
+
+      my $source_url = Mojo::URL->new($source // $self->app->config->{cpan_testers} );
+      push @{$source_url->path->parts},
+        'modules',
+        $self->app->config->{cpan_recent} // '01modules.mtime.html';
+
+      my $ua = Mojo::UserAgent->new();
+      my $module_dom = $ua->get($source_url)->result->dom;
+
+      # Create a list of modules
+      my $modules = _dom_extract($module_dom->find('a[href$=".tar.gz"]'));
+
+      $modules->each(sub { $self->app->db
+                             ->query('INSERT OR REPLACE INTO modules(name, version, released, author, relative_url) '.
+                                     'VALUES (?,?,?,?,?)',
+                                     $_->{name}, $_->{version}, $_->{released}, $_->{author}, $_->{relative_url});
+                         });
+
+      # Convert list to a regex which selects exactly those modules
+      my $regex = "^(?x:\n.^  # never matches, only purpose is to let things align nicely\n" .
+        '    # Recent modules list from ' . $source_url . "\n    |".
+        $modules->map( sub { $_->{name} . '  # Version ' . $_->{version} . '  ' . $_->{released} })->join("\n   |")     
+        . "\n)";
+      # Save regex in module_flags table
+      my $saved = $self->app->db->query('INSERT OR REPLACE INTO module_flags (priority, origin, author, disable, regex) '.
+                                        'VALUES (?,?,?,?,?)',
+                                        $info->{priority}, $info->{reason}, $info->{author}, $info->{disabled} // 0, $regex
+                                       );
+      return 1;
+    }
+
+    ################################################################
+
+    sub _text_line_extract {
+        my ($module_text) = @_;
+        
+        my $vals = {};          # populate with a hash slice:
+        @{$vals}{qw(name version relative_url)} = split /\s+/, $module_text;
+        $vals->{author} = ($vals->{relative_url} =~ m{^./../(\w+)/})[0];
+        $vals->{version} = undef if ($vals->{version} eq 'undef'); # Replace text 'undef'
+        return $vals;
+    }
+
+    sub _text_extract {
+        my ($module_text_list) = @_;
+      
+        # Extract from text file, skipping header, with header/body as SMTP message
+        my $header = 1;
+        $module_tgzs = Mojo::Collection->new (
+                                              map {
+                                                  if ($header) {
+                                                      $header = $_ !~ /^$/; # false once we reach blank line
+                                                      (); # and skip this
+                                                  } else {
+                                                      _text_extract($_);
+                                                  }
+                                              } ( split (/\n/, $module_text_list ) )
+                                             );
+        return $module_tgzs;
+    }
+
+    sub update {
+        my ($self, $source) = @_;
+
+        my $module_list;
+        my $module_dom;
+
+        # If no source specified, load default remote module list
+        my $source_url = Mojo::URL->new($source // $self->config->{cpan_testers});
+
+        if ($source_url->protocol || $source_url->host) { # Remote file
+            unless (length($source_url->path) > 1) { # no path, or '/'
+                push @{$source_url->path->parts}, ( 'modules',
+                                                    $self->config->{cpan_modules} //
+                                                    '02packages.details.txt'
+                                                  );
+            }
+            my $ua = Mojo::UserAgent->new();
+            $module_list = $ua->get($source_url)->result;
+            die "Can't download modules list: ".$module_list->message
+                unless $module_list->is_success;
+            if ($source_url->path =~ /\.htm/) {
+                $module_dom = $module_list->dom;
+            } else {
+                $module_list = $module_list->body; # plaintext contents
+            }
+        } else {                # Local file
+            $module_list = Mojo::File->new( $source)->slurp;
+            die "No module list file" unless length($module_list);
+            $module_dom = Mojo::DOM->new($module_list) if ($module_list =~ /<html/i);
+        }
+
+        my $module_tgzs;
+        if (defined $module_dom) {
+            $module_tgzs = _dom_extract($module_dom->find('a[href$=".tar.gz"]'));
+        } else {
+            # Extract from text file, skipping header, with header/body as SMTP message
+            my $header = 1;
+            $module_tgzs = Mojo::Collection->new (
+                                                  map {
+                                                      if ($header) {
+                                                          $header = $_ !~ /^$/; # false once we reach blank line
+                                                          (); # and skip this
+                                                      } else {
+                                                          _text_extract($_);
+                                                      }
+                                                  } ( split (/\n/, $module_list ) )
+                                                 );
+        }
+        $module_tgzs->each(sub { $self->sql->db
+                                     ->query('INSERT OR REPLACE INTO modules(name, version, released, author, relative_url) '.
+                                             'VALUES (?,?,?,?,?)',
+                                             $_->{name}, $_->{version}, $_->{released}, $_->{author}, $_->{relative_url});
+                             });
+        return $module_tgzs->size;
+    }
+
+    ################################################################
+
     use YAML;
 
     sub save_regex {
@@ -327,101 +447,6 @@ package Tester::Smoker {
                                          );
         
         1;
-    }
-
-    sub _text_extract {
-        my ($module_text) = @_;
-        
-        my $vals = {};          # populate with a hash slice:
-        @{$vals}{qw(name version relative_url)} = split /\s+/, $module_text;
-        $vals->{author} = ($vals->{relative_url} =~ m{^./../(\w+)/})[0];
-        $vals->{version} = undef if ($vals->{version} eq 'undef'); # Replace text 'undef'
-        return $vals;
-    }
-
-    # use Date::Parse;
-    my %months = (jan=>1,feb=>2,mar=>3,apr=>4,may=>5,jun=>6,jul=>7,aug=>8,sep=>9,oct=>10,nov=>11,dec=>12);
-
-    sub _dom_extract {
-        my $module_tgzs = shift;
-
-        my @modules;
-        $module_tgzs->each( sub {
-                                my $module_node = shift;
-                                my $module_info = {};
-                                @{$module_info}{qw(author name version)} = ( $module_node->attr('href') =~ # from the URL,
-                                                                             m{(\w+)/([^/]+?)-?v?([0-9a-z.]+)?\.tar\.gz}
-                                                                           ); # Extract into hash slice
-                                $module_info->{name} =~ s/-/::/g;
-
-                                # Extract content and remove any leading whitespace
-                                my $module_info_text = $module_node->next_node->content =~ s/\A\s+//r =~ s/\s+\z//r;
-                                ($module_info->{size}, my $m_day, my $m_mon, my $m_year) = split(/\s+/, $module_info_text, 4);
-                                # Convert human units to octets:
-                                $module_info->{size} =~ s/^([0-9.])+([kM])/$1*({k=>1024,M=>1024*1024}->{$2})/e;
-                                # use Date::Parse and do str2time() of
-                                # date for epoch timestamp, or simply
-                                # put into format SQLite understands:
-                                $module_info->{released} = sprintf('%4d-%02d-%02d', $m_year, $months{lc($m_mon)}, $m_day);
-                                push @modules, $module_info;
-                            } );
-        return Mojo::Collection->new(@modules);
-    }
-
-    sub update {
-        my ($self, $source) = @_;
-
-        my $module_list;
-        my $module_dom;
-
-        # If no source specified, load default remote module list
-        my $source_url = Mojo::URL->new($source // $self->config->{cpan_testers});
-
-        if ($source_url->protocol || $source_url->host) { # Remote file
-            unless (length($source_url->path) > 1) { # no path, or '/'
-                push @{$source_url->path->parts}, ( 'modules',
-                                                    $self->config->{cpan_modules} //
-                                                    '02packages.details.txt'
-                                                  );
-            }
-            my $ua = Mojo::UserAgent->new();
-            $module_list = $ua->get($source_url)->result;
-            die "Can't download modules list: ".$module_list->message
-                unless $module_list->is_success;
-            if ($source_url->path =~ /\.htm/) {
-                $module_dom = $module_list->dom;
-            } else {
-                $module_list = $module_list->body; # plaintext contents
-            }
-        } else {                # Local file
-            $module_list = Mojo::File->new( $source)->slurp;
-            die "No module list file" unless length($module_list);
-            $module_dom = Mojo::DOM->new($module_list) if ($module_list =~ /<html/i);
-        }
-
-        my $module_tgzs;
-        if (defined $module_dom) {
-            $module_tgzs = _dom_extract($module_dom->find('a[href$=".tar.gz"]'));
-        } else {
-            # Extract from text file, skipping header, with header/body as SMTP message
-            my $header = 1;
-            $module_tgzs = Mojo::Collection->new (
-                                                  map {
-                                                      if ($header) {
-                                                          $header = $_ !~ /^$/; # false once we reach blank line
-                                                          (); # and skip this
-                                                      } else {
-                                                          _text_extract($_);
-                                                      }
-                                                  } ( split (/\n/, $module_list ) )
-                                                 );
-        }
-        $module_tgzs->each(sub { $self->sql->db
-                                     ->query('INSERT OR REPLACE INTO modules(name, version, released, author, relative_url) '.
-                                             'VALUES (?,?,?,?,?)',
-                                             $_->{name}, $_->{version}, $_->{released}, $_->{author}, $_->{relative_url});
-                             });
-        return $module_tgzs->size;
     }
 
     ################################################################
