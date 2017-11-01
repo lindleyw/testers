@@ -2,87 +2,111 @@ package TestModule;
 
 use v5.10;
 use Data::Dumper;
+use Mojo::File;
+use File::Temp;
+use CPAN::Testers::Common::Client::Config;
+
+use strict;
+use warnings;
+
+my $verbose = 1;
 
 sub test_module {
-    my $verbose = 1;
     say "\nentering test_module\n" if ($verbose);
+    system("date") if ($verbose);
 
     my ($params) = shift;
     say Dumper ($params) if ($verbose);
 
+    # Find where our reports are going to be located
+    my $cf = CPAN::Testers::Common::Client::Config->new;
+
+    $cf->read;
+
+    my $temp_dir_name = File::Temp->newdir;
+    # by default this uses CLEANUP => 1 (c.f. File::Temp doc)
+
     my $module       = $params->{module};
     my $perl_release = $params->{perl_release};
- 
+
     # next two variable settings are explained in this link
-	# http://www.dagolden.com/index.php/2098/the-annotated-lancaster-consensus
-    $NONINTERACTIVE_TESTING = 1;
-    $AUTOMATED_TESTING      = 1;
+    # http://www.dagolden.com/index.php/2098/the-annotated-lancaster-consensus
+    local $ENV{NONINTERACTIVE_TESTING} = 1;
+    local $ENV{AUTOMATED_TESTING}      = 1;
 
-    system("date");
+    local $ENV{PERL_CPANM_HOME}     = $temp_dir_name;
+    my $cpanm_test_command = "perlbrew exec --with $perl_release ";
+    $cpanm_test_command .= "cpanm --test-only $module ";
+    say "cpanm_test_command $cpanm_test_command" if ($verbose);
+    check_exit('test', system("$cpanm_test_command") );
 
-    # isolate module name
-    $module = substr( $module, 0, rindex( $module, '-' ) )
-      if ( $module =~ /-/ );
-    $module = substr( $module, rindex( $module, '/' ) + 1 );
-    $module =~ s/-/::/g;
+    # Probably not required?  -- wl 20171101
+    # #   these hard coded paths will be replaced with soft paths
+    # my $build_file = "$ENV{PERL_CPANM_HOME}/latest-build/build.log";
+    # say "current build log $build_file" if ($verbose);
+    # system("cat $build_file") if ($verbose);;
 
-    # test the module, don't install it
-    my $command = "perlbrew exec --with $perl_release ";
-    $command .= "cpanm --test-only $module ";
-    say "about to test $module for $perl_release" if ($verbose);
+    # Both the build log and the report log, can go into the same directory
+    # cpanm-reporter will put its report in the directory
+    # indicated by the 'transport' setting in file config.ini
+    # in the ~/.cpanmreporter directory
+    # ~/.cpanmreporter
+    local $ENV{CPANM_REPORTER_HOME} = $temp_dir_name;
 
-    # cpanm will put its test report in the default directory:
-    #  ~/cpanm/build.log 
-    check_test_exit( system("$command") );
-    say "Should have completed testing $module for $perl_release"
-      if ($verbose);
+    local $ENV{PERL_CPAN_REPORTER_DIR} = $temp_dir_name; # location of config.ini:
+    my $email = $cf->email_from;
+    Mojo::File->new($temp_dir_name)->child('config.ini')->spurt(<<CONFIG);
+edit_report=default:no
+email_from=$email
+send_report=default:yes
+transport=File $temp_dir_name
+CONFIG
 
-    say "CPANM_REPORTER_HOME is $CPANM_REPORTER_HOME"
-      if ($verbose);
+    my $cpanm_reporter_command = "perlbrew exec --with $perl_release " .
+    "cpanm-reporter --verbose " .
+    # "--build_dir=$temp_dir_name --build_logfile=$build_file " .
+     "--skip-history --ignore-versions --force ";
+    check_exit('reporter', system($cpanm_reporter_command) );
 
-    $PERL_CPAN_REPORTER_DIR = "~/.cpanmreporter";
-    $command = "perlbrew exec --with $perl_release ";
-    $command .= "cpanm-reporter --verbose ";
-    $command .= "--skip-history --ignore-versions --force ";
+    # At long last, our hero returns and discovers:
+    # ${temp_dir_name}/{Status}.{module_name}-{build_env_stuff}.{timestamp}.{pid}.rpt
+    # ${temp_dir_name}/work/{timestamp}.{pid}/build.log
 
-    say "About to send cpanm report for $perl_release: \n  $command"
-      if ($verbose);
-    check_reporter_exit( system($command) );
-    say
-"Should have completed sending cpanm report for $perl_release :\n  $command"
-      if ($verbose);
+    my $test_results = Mojo::File->new($temp_dir_name)->list_tree;
+    # Find the report file.  Extract the result (e.g., 'fail') and return with the filename.
+    my $report_file = $test_results->map(sub {
+                                             /^${temp_dir_name}.(\w+)\..*\.(\d+)\.(\d+)\.rpt/
+                                             ? ($_, $1): ()});
 
+    # We should now have a config.ini that cpanm-reporter will pick up.
+    # ; $DB::single = 1;
+
+    my ($report_filename, $grade);
+    if ($report_file->size) { # Found.
+        $report_filename = $report_file->[0]->to_string;
+        $grade = $report_file->[1];
+    }
+    my $build_log = $test_results->grep(sub { /build.log$/ && !-l $_})->first; # ignore symlinks
+    return {
+            build_log => Mojo::File->new($build_log)->slurp,
+            report    => Mojo::File->new($report_filename)->slurp,
+            grade     => $grade,
+           };
 }
-warn("bad exit from test_module subr") if $@;
 
-sub check_test_exit {
-    my ($exit) = @_;
+sub check_exit {
+    my ($what, $exit) = @_;
     if ( $exit == -1 ) {
-        say "test failed to execute: $!";
+        say "$what failed to execute: $!";
     }
     elsif ( $exit & 127 ) {
-        printf "test child died with signal %d, %s coredump\n",
+        printf "$what child died with signal %d, %s coredump\n",
           ( $exit & 127 ), ( $exit & 128 ) ? 'with' : 'without';
     }
     else {
-        printf "test child exited with value %d\n", $exit >> 8;
+        printf "$what child exited with value %d\n", $exit >> 8;
     }
 }
 
-sub check_reporter_exit {
-    my ($exit) = @_;
-    if ( $exit == -1 ) {
-        say "reporter failed to execute: $!";
-    }
-    elsif ( $exit & 127 ) {
-        printf "reporter child died with signal %d, %s coredump\n",
-          ( $exit & 127 ), ( $exit & 128 ) ? 'with' : 'without';
-    }
-    else {
-        printf "reporter child exited with value %d\n", $exit >> 8;
-    }
-}
-#close STDOUT;
-#close STDERR;
 1;
 
