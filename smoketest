@@ -12,6 +12,9 @@ use v5.22;
 use strict;
 use warnings;
 
+use FindBin;
+use lib "$FindBin::Bin/lib/";
+
 ################################################################
 
 # Can be called as, e.g.,
@@ -313,7 +316,7 @@ package Tester::Smoker {
       
         # Extract from text file, skipping header, with header/body as SMTP message
         my $header = 1;
-        $module_tgzs = Mojo::Collection->new (
+        my $module_tgzs = Mojo::Collection->new (
                                               map {
                                                   if ($header) {
                                                       $header = $_ !~ /^$/; # false once we reach blank line
@@ -479,6 +482,8 @@ package Tester::Smoker {
 
     ################################################################
 
+    use TestModule;
+
     sub test {
         my $self = shift;
         my $minion_job = shift;
@@ -487,6 +492,7 @@ package Tester::Smoker {
         my $module_id = $args->{module_id};
         my $env_id = $args->{environment_id};
         my ($perlbuild, $perlbuild_id);
+        my $grade;
 
         if (! $module_id) {
             $self->log->error("No module_id");
@@ -555,7 +561,7 @@ package Tester::Smoker {
             ($build_log, $build_error_log) = cpan_wrapper::run_test(join('/',
                                                                          $module_info->{author},
                                                                          $module_specific));
-                
+            # NOTE: Need to set $grade    
         } else {  # use Perlbrew
             my $pb = $self->sql->db->query('SELECT id, perlbrew FROM environments WHERE id=?',
                                            $env_id)->hashes;
@@ -569,88 +575,95 @@ package Tester::Smoker {
                 return 0;
             }
 
-            eval {
-                # setup to handle signals
-                local $SIG{'HUP'}  = sub { say "Got hang up" };
-                local $SIG{'INT'}  = sub { say "Got interrupt" };
-                local $SIG{'STOP'} = sub { say "Stopped" };
-                local $SIG{'TERM'} = sub { say "Got term" };
-                local $SIG{'KILL'} = sub { say "Got kill" };
+            my $result = TestModule::test_module( module => $module_info->{relative_url},
+                                                  perl_release => $perlbuild );
+            # Save with a hash slice
+            # NB: build_error_log is actually the result log
+            ($build_log, $build_error_log, $grade) = @$result{qw(build_log report grade)};
 
-                # this one won't work with apostrophes like above
-                local $SIG{__DIE__} = sub { say "Got die" };
+            # eval {
+            #     # setup to handle signals
+            #     local $SIG{'HUP'}  = sub { say "Got hang up" };
+            #     local $SIG{'INT'}  = sub { say "Got interrupt" };
+            #     local $SIG{'STOP'} = sub { say "Stopped" };
+            #     local $SIG{'TERM'} = sub { say "Got term" };
+            #     local $SIG{'KILL'} = sub { say "Got kill" };
+
+            #     # this one won't work with apostrophes like above
+            #     local $SIG{__DIE__} = sub { say "Got die" };
                 
-                # XXX: What we want is:
-                # » use CPAN; $result = CPAN::Shell->test('AUTHOR/Foo-Bar-1.23.4.tar.gz') «
-                # but note that this seems to fail downloading from cpan.org/authors/id/A/AU/AUTHOR/...
-                # in most cases. Also that repository seems to only retain a relatively few old versions.
-                # — WL 2017-09-18
+            #     # XXX: What we want is:
+            #     # » use CPAN; $result = CPAN::Shell->test('AUTHOR/Foo-Bar-1.23.4.tar.gz') «
+            #     # but note that this seems to fail downloading from cpan.org/authors/id/A/AU/AUTHOR/...
+            #     # in most cases. Also that repository seems to only retain a relatively few old versions.
+            #     # — WL 2017-09-18
 
-                # test the module, don't install it
-                $command = "perlbrew exec ";
-                $command .= "--with $perlbuild " if defined $perlbuild;
+            #     # test the module, don't install it
+            #     $command = "perlbrew exec ";
+            #     $command .= "--with $perlbuild " if defined $perlbuild;
 
-                # After selecting which if any Perlbrew version,
-                # remember which Perl version we actually used.
-                my $cpanm_home = Mojo::File->new($self->build_dir);
-                $perlbuild = 'perl-'.$Config{version} unless defined $perlbuild;
-                $cpanm_home = $cpanm_home->child($perlbuild);
+            #     # After selecting which if any Perlbrew version,
+            #     # remember which Perl version we actually used.
+            #     my $cpanm_home = Mojo::File->new($self->build_dir);
+            #     $perlbuild = 'perl-'.$Config{version} unless defined $perlbuild;
+            #     $cpanm_home = $cpanm_home->child($perlbuild);
 
-                # cpanm will put its test reports in this directory,
-                # cpanm-reporter will get its input from this directory
-                $cpanm_home->make_path({mode => 0777});
-                local $ENV{PERL_CPANM_HOME} = $cpanm_home;
-                # say "PERL_CPANM_HOME is:  $ENV{PERL_CPANM_HOME}" if ($self->verbose);
-                my $BUILD_DIR     = $cpanm_home;
-                my $BUILD_LOGFILE = $cpanm_home->child('build.log');
+            #     # cpanm will put its test reports in this directory,
+            #     # cpanm-reporter will get its input from this directory
+            #     $cpanm_home->make_path({mode => 0777});
+            #     local $ENV{PERL_CPANM_HOME} = $cpanm_home;
+            #     # say "PERL_CPANM_HOME is:  $ENV{PERL_CPANM_HOME}" if ($self->verbose);
+            #     my $BUILD_DIR     = $cpanm_home;
+            #     my $BUILD_LOGFILE = $cpanm_home->child('build.log');
 
-                if ($self->verbose) {
-                    $self->log->info("BUILD_DIR is: $BUILD_DIR for $perlbuild");
-                    $self->log->info("BUILD_LOGFILE is: $BUILD_LOGFILE for $perlbuild");
-                }
+            #     if ($self->verbose) {
+            #         $self->log->info("BUILD_DIR is: $BUILD_DIR for $perlbuild");
+            #         $self->log->info("BUILD_LOGFILE is: $BUILD_LOGFILE for $perlbuild");
+            #     }
 
-                # Either module name (for latest version) or full URL for a specific version
-                $command .= "cpanm --test-only ";
+            #     # Either module name (for latest version) or full URL for a specific version
+            #     $command .= "cpanm --test-only ";
 
-                $command .= $tested_module;   # use URL from modules table
-                # We will search for this once test is complete
-                my $test_log_path = $tested_module->path->parts->[-1];
+            #     $command .= $tested_module;   # use URL from modules table
+            #     # We will search for this once test is complete
+            #     my $test_log_path = $tested_module->path->parts->[-1];
 
-                # Q: Do we need this at all?  Or: Consider changing 'tee' to…?
-                # $command .= "| tee $BUILD_LOGFILE";  # was: $test_log_home/$module.$perlbuild -- WL
+            #     # Q: Do we need this at all?  Or: Consider changing 'tee' to…?
+            #     # $command .= "| tee $BUILD_LOGFILE";  # was: $test_log_home/$module.$perlbuild -- WL
 
-                if ($self->verbose) {
-                    $self->log->info("Testing $module for $perlbuild.");
-                    $self->log->info("Command is:  $command");
-                }
+            #     if ($self->verbose) {
+            #         $self->log->info("Testing $module for $perlbuild.");
+            #         $self->log->info("Command is:  $command");
+            #     }
 
-                # TODO: Wrap the system() call in a capture { ... } block but also regard the exit code
-                $self->check_exit( system("$command", 'test') );
-                $self->log->info("Tested $module for $perlbuild");  # TODO: append exit code?
+            #     # TODO: Wrap the system() call in a capture { ... } block but also regard the exit code
+            #     $self->check_exit( system("$command", 'test') );
+            #     $self->log->info("Tested $module for $perlbuild");  # TODO: append exit code?
                     
-                # NOTE: The system() command above creates a directory like
-                # ~/.cpanm/work/TIMESTAMP.PID e.g., 1499707240.6465
-                # containing:
-                #    build.log
-                #    Mojolicious-7.36   # directory name is module and version
-                #    " " " .tar.gz
+            #     # NOTE: The system() command above creates a directory like
+            #     # ~/.cpanm/work/TIMESTAMP.PID e.g., 1499707240.6465
+            #     # containing:
+            #     #    build.log
+            #     #    Mojolicious-7.36   # directory name is module and version
+            #     #    " " " .tar.gz
 
-                # Locate the log file just created
-                my $logfiles = $cpanm_home->list_tree->grep(sub { /$test_log_path\z/ });
-                state $check_timestamp = sub { my $p = shift; $p->path->dirname =~ m{(\d+)\.\d+\z} ? $1 : undef };
-                # Find the directory containing the build.log which was just created.
-                my $latest_log_dir = $logfiles->sort(sub{$check_timestamp->($a) <=> $check_timestamp->($b)})
-                ->last->dirname;
-                $self->log->info("build.log for $tested_module in $latest_log_dir");
-                # XXX: Above stanza is incomplete. Replace with code using Capture::Tiny
+            #     # Locate the log file just created
+            #     my $logfiles = $cpanm_home->list_tree->grep(sub { /$test_log_path\z/ });
+            #     state $check_timestamp = sub { my $p = shift; $p->path->dirname =~ m{(\d+)\.\d+\z} ? $1 : undef };
+            #     # Find the directory containing the build.log which was just created.
+            #     my $latest_log_dir = $logfiles->sort(sub{$check_timestamp->($a) <=> $check_timestamp->($b)})
+            #     ->last->dirname;
+            #     $self->log->info("build.log for $tested_module in $latest_log_dir");
+            #     # XXX: Above stanza is incomplete. Replace with code using Capture::Tiny
 
-            };  # end of eval{}
+            # };  # end of eval{}
             # end of Perlbrew logic
         }
 
         # XXX: If the ->note() method is not called above, this fails?
         $minion_job->note(build_log => $build_log,
-                          error_log => $build_error_log
+                          result_log => $build_error_log,
+                          grade => $grade,
                          );
 
         $minion_job->finish("Ran test for $tested_module");
@@ -664,6 +677,7 @@ package Tester::Smoker {
         $self->minion->enqueue(report => [module => $module,
                                           module_id => $module_id,
                                           perlbuild => $perlbuild,
+                                          grade => $grade,
                                           (defined $command) ? (command => $command) : (),
                                           tested_module => $tested_module,
                                           minion_job => $minion_job->info->{id},
