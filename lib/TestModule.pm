@@ -52,19 +52,27 @@ sub test_module {
     # in the ~/.cpanmreporter directory
     # ~/.cpanmreporter
     local $ENV{CPANM_REPORTER_HOME} = $temp_dir_name;
+    my $config_file = Mojo::File->new($temp_dir_name)->child('config.ini');
 
-    local $ENV{PERL_CPAN_REPORTER_DIR} = $temp_dir_name; # location of config.ini:
+    # local $ENV{PERL_CPAN_REPORTER_DIR} = $temp_dir_name; # directory for config.ini:
+    local $ENV{PERL_CPAN_REPORTER_CONFIG} = $config_file->to_string; # exact location of config.ini
+
     my $email = $cf->email_from;
-    Mojo::File->new($temp_dir_name)->child('config.ini')->spurt(<<CONFIG);
+    $config_file->spurt(<<CONFIG);
 edit_report=default:no
 email_from=$email
 send_report=default:yes
 transport=File $temp_dir_name
 CONFIG
 
+    # We should now have a config.ini that cpanm-reporter will pick up.
+    # ; $DB::single = 1;
+
+    my $build_file = Mojo::File->new($temp_dir_name)->child('build.log');
     my $cpanm_reporter_command = "perlbrew exec --with $perl_release " .
     "cpanm-reporter --verbose " .
-    # "--build_dir=$temp_dir_name --build_logfile=$build_file " .
+    "--build_dir=$temp_dir_name " .
+    "--build_logfile=$build_file " .
      "--skip-history --ignore-versions --force ";
     check_exit('reporter', system($cpanm_reporter_command) );
 
@@ -77,9 +85,6 @@ CONFIG
     my $report_file = $test_results->map(sub {
                                              /^${temp_dir_name}.(\w+)\..*\.(\d+)\.(\d+)\.rpt/
                                              ? ($_, $1): ()});
-
-    # We should now have a config.ini that cpanm-reporter will pick up.
-    # ; $DB::single = 1;
 
     my ($report_filename, $grade);
     if ($report_file->size) { # Found.

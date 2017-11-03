@@ -9,3 +9,17 @@
    -- get list of modules from cpan api
    -- run at least two tests (using database)
 4. prepare for code review with Doug
+
+
+2017-10-23
+
+
+use CPAN::Testers::Common::Client::Config;
+$cf=CPAN::Testers::Common::Client::Config->new;
+$cf->read;
+if (lc($cf->transport_name) ne 'file') {
+  die "cpanm must be configured to use the File transport method."
+} else {
+  $transport_file = $cf->transport_args[0];
+}
+
