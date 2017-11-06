@@ -40,11 +40,10 @@ sub test_module {
     say "cpanm_test_command $cpanm_test_command" if ($verbose);
     check_exit('test', system("$cpanm_test_command") );
 
-    # Probably not required?  -- wl 20171101
-    # #   these hard coded paths will be replaced with soft paths
-    # my $build_file = "$ENV{PERL_CPANM_HOME}/latest-build/build.log";
-    # say "current build log $build_file" if ($verbose);
-    # system("cat $build_file") if ($verbose);;
+    # TODO: Verify that build.log exists
+    # XXX: What happens if the module cannot be downloaded?  Cases include:
+    #      - Network timeout
+    #      - Module/release no longer exists
 
     # Both the build log and the report log, can go into the same directory
     # cpanm-reporter will put its report in the directory
@@ -81,6 +80,11 @@ CONFIG
     # ${temp_dir_name}/work/{timestamp}.{pid}/build.log
 
     my $test_results = Mojo::File->new($temp_dir_name)->list_tree;
+
+    # TODO: handle case in which download fails.
+    # Presumably we will have a build.log but no .rpt file
+    # Probably want to return an error?
+
     # Find the report file.  Extract the result (e.g., 'fail') and return with the filename.
     my $report_file = $test_results->map(sub {
                                              /^${temp_dir_name}.(\w+)\..*\.(\d+)\.(\d+)\.rpt/
