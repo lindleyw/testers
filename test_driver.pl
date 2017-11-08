@@ -9,7 +9,7 @@ use Data::Dumper;
 
 my $params;
 
-foreach my $example_status (qw(FAIL NA PASS UNKNOWN)) {
+foreach my $example_status (qw(NOT_FOUND FAIL NA PASS UNKNOWN)) {
     $params = {
                # next two lines contain module name and perl revision to test it with
                module =>"Acme::CPAN::Testers::$example_status",
@@ -23,6 +23,8 @@ foreach my $example_status (qw(FAIL NA PASS UNKNOWN)) {
 
     # ; $DB::single=1;
 
-    print "\n Dump output\n";
-    print Dumper $output_hash;
+    print "... $params->{module}:\n";
+    # print "\n Dump output\n";
+    print Dumper %$output_hash{qw(success error grade)};
 }
+

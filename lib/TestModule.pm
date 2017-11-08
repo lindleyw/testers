@@ -28,6 +28,7 @@ sub test_module {
 
     my $module       = $params->{module};
     my $perl_release = $params->{perl_release};
+    my $error = '';
 
     # next two variable settings are explained in this link
     # http://www.dagolden.com/index.php/2098/the-annotated-lancaster-consensus
@@ -38,12 +39,24 @@ sub test_module {
     my $cpanm_test_command = "perlbrew exec --with $perl_release ";
     $cpanm_test_command .= "cpanm --test-only $module ";
     say "cpanm_test_command $cpanm_test_command" if ($verbose);
-    check_exit('test', system("$cpanm_test_command") );
 
-    # TODO: Verify that build.log exists
-    # XXX: What happens if the module cannot be downloaded?  Cases include:
-    #      - Network timeout
-    #      - Module/release no longer exists
+    my $check_msg;
+    $check_msg = check_exit('test', $cpanm_test_command ); # Error string if defined, undef = ok
+
+    my $build_file = Mojo::File->new($temp_dir_name)->child('build.log');
+
+    # Regrettably, the system() command returns 1 both in the case of a module which
+    # cannot be found, and in the case of a module which was tested and failed.
+    # TODO: Can we resolve the difference between those cases?  Do we need to?
+    $error .= $check_msg if defined $check_msg;
+
+    # ## XXX: Nice, but wrong. See above.
+    # if (defined $check_msg) {  # If an error occurred above,
+    #     return { success => 0,
+    #              error => $check_msg,
+    #              ( -e $build_file ) ? (build_log => $build_file->slurp) : () # Build log contents, if exists
+    #            };
+    # }
 
     # Both the build log and the report log, can go into the same directory
     # cpanm-reporter will put its report in the directory
@@ -53,10 +66,14 @@ sub test_module {
     local $ENV{CPANM_REPORTER_HOME} = $temp_dir_name;
     my $config_file = Mojo::File->new($temp_dir_name)->child('config.ini');
 
-    # local $ENV{PERL_CPAN_REPORTER_DIR} = $temp_dir_name; # directory for config.ini:
     local $ENV{PERL_CPAN_REPORTER_CONFIG} = $config_file->to_string; # exact location of config.ini
 
+    # This only required for CPAN::Reporter, which we are not using here.
+    # local $ENV{PERL_CPAN_REPORTER_DIR} = $temp_dir_name; # directory for config.ini
+
     my $email = $cf->email_from;
+
+    # Create a config.ini to override the default for cpanm-reporter
     $config_file->spurt(<<CONFIG);
 edit_report=default:no
 email_from=$email
@@ -64,16 +81,15 @@ send_report=default:yes
 transport=File $temp_dir_name
 CONFIG
 
-    # We should now have a config.ini that cpanm-reporter will pick up.
-    # ; $DB::single = 1;
-
-    my $build_file = Mojo::File->new($temp_dir_name)->child('build.log');
     my $cpanm_reporter_command = "perlbrew exec --with $perl_release " .
     "cpanm-reporter --verbose " .
     "--build_dir=$temp_dir_name " .
     "--build_logfile=$build_file " .
-     "--skip-history --ignore-versions --force ";
-    check_exit('reporter', system($cpanm_reporter_command) );
+    "--skip-history --ignore-versions --force ";
+
+    if (defined ($check_msg = check_exit('reporter', $cpanm_reporter_command ))) {
+        $error .= "$check_msg\n";
+    }
 
     # At long last, our hero returns and discovers:
     # ${temp_dir_name}/{Status}.{module_name}-{build_env_stuff}.{timestamp}.{pid}.rpt
@@ -81,40 +97,53 @@ CONFIG
 
     my $test_results = Mojo::File->new($temp_dir_name)->list_tree;
 
-    # TODO: handle case in which download fails.
-    # Presumably we will have a build.log but no .rpt file
-    # Probably want to return an error?
-
     # Find the report file.  Extract the result (e.g., 'fail') and return with the filename.
     my $report_file = $test_results->map(sub {
-                                             /^${temp_dir_name}.(\w+)\..*\.(\d+)\.(\d+)\.rpt/
-                                             ? ($_, $1): ()});
+                                             /^${temp_dir_name}   # directory name at start
+                                              \W+                 # path delimiter
+                                              (\w+)\.             # grade
+                                              .*\.                # module name and build_env stuff
+                                              (\d+)\.(\d+)        # timestamp.pid
+                                              \.rpt\z/x           # trailing extension
+                                              ? ($_, $1): ()});
 
-    my ($report_filename, $grade);
-    if ($report_file->size) { # Found.
+    my ($report_filename, $report_contents, $grade);
+    if ($report_file->size) { # Report file exists.  Extract grade and contents.
         $report_filename = $report_file->[0]->to_string;
         $grade = $report_file->[1];
+        $report_contents = Mojo::File->new($report_filename)->slurp if (-e $report_filename);
     }
-    my $build_log = $test_results->grep(sub { /build.log$/ && !-l $_})->first; # ignore symlinks
+    # my $build_log = $test_results->grep(sub { /build.log$/ && !-l $_})->first; # ignore symlinks
     return {
-            build_log => Mojo::File->new($build_log)->slurp,
-            report    => Mojo::File->new($report_filename)->slurp,
+            success => 1,                    # Completed, although possibly with errors
+            build_log => $build_file->slurp, # Mojo::File->new($build_log)->slurp,
+            report    => $report_contents,
+            length($error) ? (error => $error) : (),
             grade     => $grade,
            };
 }
 
 sub check_exit {
-    my ($what, $exit) = @_;
+    # Executes a system command.
+    # Returns a descriptive error if something went wrong, or undef if everything's OK
+    my ($what, $command) = @_;
+
+    my $exit = eval { system ( $command ) };
+    # undef from eval means Perl error
+    # zero return from system means normal exit
+    # -1 means failure to execute the command at all
+    # other values as below
+
+    return "In command ($command), error: ($@)" if !defined $exit;
+    return undef if ($exit == 0);
+    
     if ( $exit == -1 ) {
-        say "$what failed to execute: $!";
+        return "$what failed to execute: $!";
+    } elsif ( $exit & 127 ) {
+        return sprintf ("$what child died with signal %d, %s coredump",
+                        ( $exit & 127 ), ( $exit & 128 ) ? 'with' : 'without');
     }
-    elsif ( $exit & 127 ) {
-        printf "$what child died with signal %d, %s coredump\n",
-          ( $exit & 127 ), ( $exit & 128 ) ? 'with' : 'without';
-    }
-    else {
-        printf "$what child exited with value %d\n", $exit >> 8;
-    }
+    return sprintf ("$what child exited with value %d", $exit >> 8);
 }
 
 1;
