@@ -128,13 +128,29 @@ sub check_exit {
     # Returns a descriptive error if something went wrong, or undef if everything's OK
     my ($what, $command) = @_;
 
-    my $exit = eval { system ( $command ) };
+    my $signal_received;
+    my $exit = eval {
+	# setup to handle signals
+	local $SIG{'HUP'}  = sub { $signal_received = "Hang up" };
+	local $SIG{'INT'}  = sub { $signal_received = "Interrupt" };
+	local $SIG{'STOP'} = sub { $signal_received = "Stopped" };
+	local $SIG{'TERM'} = sub { $signal_received = "Term" };
+	local $SIG{'KILL'} = sub { $signal_received = "Kill" };
+
+	# this one won't work with apostrophes like above
+	local $SIG{__DIE__} = sub { $signal_received = "Die" };
+
+	system ( $command );
+    };
     # undef from eval means Perl error
     # zero return from system means normal exit
     # -1 means failure to execute the command at all
     # other values as below
 
-    return "In command ($command), error: ($@)" if !defined $exit;
+    if (!defined $exit) {
+	return "In command ($command), error: ($@)" .
+	    defined $signal_received ? " with signal: $signal_received" : '';
+    }
     return undef if ($exit == 0);
     
     if ( $exit == -1 ) {
