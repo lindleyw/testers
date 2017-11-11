@@ -1,0 +1,103 @@
+
+-- TABLE: Module
+--  ModuleNum		0001				// Unique record number 
+--  Author		BLACKJ				// module author
+--  OptionalDir						// sometimes there is an extra dir in module path name
+--  ModuleName		Acme-BLACKJ-Utils		// module name
+
+-- TABLE: TestStatus
+--  ModuleNum		0001				// FOREIGN KEY(Module) References Module(ModuleNum)
+--  Error			Module not found|Disk Error...	// Misc. errors
+--  BuildLog		Complete|Incomplete|Absent|Null|Pending	// created by cpanm --test-only 
+
+--  BuildLogPath		smoke/.cpanm/perl-5.24.0/work/1234567890.12345/build.log 
+--  BuildLogResult	Pass|Fail|Other
+--  Revision		0.01				// module revision number
+--  DisabledBy		ANDK|None			// ANDK = Testing disabled by this CPAN ID 
+--							// [ANDK, BLUEWIND, current tester ID, etc.]
+--							// None = Testing is enabled
+--  PerlBuild		5.20.3-thread-debug		// module tested under this Perl build revision
+--  TestDate		1496440070			// epoch date and time of test
+--  TestDuration		83				// in seconds
+--  CpanmReport		Complete|Incomplete|Absent	// created by cpanm-remporter
+--  CpanmReportPath	smoke/.cpanmreporter/offline/sync/pass.Acme-BLACKJ-Utils_0.01.x86_64-linux-gnu-thread-multi.3.13.0-79-generic.[epoch].rpt]
+--  CpanmReportSent	Yes|No|Unknown
+--  ScriptName		Smoker.pl			// Perl script carrying out test
+--  ScriptRevision	0.30				// test script revision
+--  ScriptDate		1496300070			// epoch time of test script revision
+--
+-- -- -- --
+
+-- 1 down
+
+DROP TABLE IF EXISTS modules;
+DROP INDEX IF EXISTS module_idx;
+DROP TABLE IF EXISTS module_flags;
+DROP INDEX IF EXISTS module_flags_idx;
+DROP TABLE IF EXISTS environments;
+DROP INDEX IF EXISTS environment_idx;
+DROP TABLE IF EXISTS tests;
+
+-- 1 up
+
+CREATE TABLE modules (
+                      id INTEGER PRIMARY KEY,
+                      name TEXT,
+                      version TEXT,
+                      released TIMESTAMP,  -- version timestamp
+                      author TEXT,
+                      relative_url TEXT,
+                      disabled_by TEXT,
+                      added TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+
+CREATE UNIQUE INDEX module_idx ON modules (name, version);
+
+-- For storing the complex regexps that will be applied to module names,
+-- thereby determining which modules are enabled and disabled.
+
+CREATE TABLE module_flags (
+                           id INTEGER PRIMARY KEY,
+                           priority INTEGER, -- lower values take higher precedence
+                           disable  INTEGER, -- enable (0) or disable (1) the modules in the regex
+                           origin TEXT,  -- URL or filename
+                           regex  TEXT,  -- Regular expression to match module names against
+                           author TEXT,  -- PAUSE identifier
+                           added TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                          );
+
+CREATE UNIQUE INDEX module_flags_idx ON module_flags (origin);
+
+CREATE TABLE environments (
+                           id INTEGER PRIMARY KEY,
+                           host TEXT,         -- Hostname (preferably full name; 'localhost' is less helpful)
+                           perlbrew TEXT,     -- Version name we pass to Perlbrew
+                           -- These (platform, perl, osname, osvers) match fields in Testers Metabase
+                           -- See https://github.com/barbie/cpan-testers-data-generator/
+                           platform   TEXT,   
+                           perl       TEXT,   -- Perl version, $Config{version}
+                           osname     TEXT,   -- from $Config{osname}
+                           osvers     TEXT,   -- $Config{osvers}
+                           added TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                           );
+
+CREATE UNIQUE INDEX environment_idx ON environments (host, perlbrew);
+
+CREATE TABLE tests (
+                    id INTEGER PRIMARY KEY,
+                    module_id INTEGER,        -- UUT [unit under test]
+                    version TEXT,             -- Version number as tested
+                    error TEXT,               -- Last or most-severe error encountered
+                    environment_id INTEGER,   -- replaces perl_build
+                    test_started TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- when testing began (was enqueued)
+                    test_finished TIMESTAMP,  -- replaces test_duration
+                    build_log TEXT,           -- the contents of the resulting build.log
+                    build_log_result TEXT,    -- parsed from the build log
+                    cpanm_report TEXT,        -- as submitted
+                    cpanm_report_sent TIMESTAMP,
+                    -- script_name TEXT,
+                    -- script_revision TEXT,    -- from CPAN
+                    -- script_date TIMESTAMP,   -- from CPAN
+                    FOREIGN KEY(module_id) REFERENCES modules(id),
+                    FOREIGN KEY(environment_id) REFERENCES environments(id)
+);
