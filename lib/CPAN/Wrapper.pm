@@ -74,12 +74,12 @@ package CPAN::Wrapper {
     }
 
     sub recent_url {
-      my ($self) = @_;
-      my $source_url = Mojo::URL->new($self->app->config->{cpan}->{testers} );
-      push @{$source_url->path->parts},
-        'modules',
-        $self->app->config->{cpan}->{recent} // '01modules.mtime.html';
-      return $source_url;
+        my ($self) = @_;
+        my $source_url = Mojo::URL->new($self->config->{testers} );
+        push @{$source_url->path->parts},
+          'modules',
+          $self->config->{recent} // '01modules.mtime.html';
+        return $source_url;
     }
 
     ################################################################

@@ -42,10 +42,10 @@ DROP TABLE IF EXISTS tests;
 
 CREATE TABLE modules (
                       id INTEGER PRIMARY KEY,
-                      name TEXT,
-                      version TEXT,
+                      name TEXT NOT NULL,
+                      version TEXT NOT NULL,
                       released TIMESTAMP,  -- version timestamp
-                      author TEXT,
+                      author TEXT NOT NULL,
                       relative_url TEXT,
                       disabled_by TEXT,
                       added TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

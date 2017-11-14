@@ -137,7 +137,8 @@ package main::Command::list {
     }
 };
 
-package main::Command::update {
+package main::Command::reload {
+    # formerly 'update' command, this reloads the entire CPAN list.
     use Mojo::Base 'Mojolicious::Command';
 
     sub run {
@@ -184,7 +185,7 @@ package main::Command::regex {
 
 ################################################################
 
-package main::Command::queue_recent {
+package main::Command::update {
     use Mojo::Base 'Mojolicious::Command';
 
     sub run {
