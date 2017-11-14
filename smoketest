@@ -159,6 +159,16 @@ package main::Command::update_perl_versions {
     }
 };
 
+package main::Command::update_module {
+    use Mojo::Base 'Mojolicious::Command';
+
+    sub run {
+        my ($self, @args) = @_;
+
+        return $self->app->smoker->update_module(@args);
+    }
+};
+
 ################################################################
 
 package main::Command::regex {

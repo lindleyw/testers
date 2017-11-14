@@ -48,7 +48,8 @@ CREATE TABLE modules (
                       author TEXT,
                       relative_url TEXT,
                       disabled_by TEXT,
-                      added TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                      added TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                      UNIQUE (name, version) ON CONFLICT IGNORE
                     );
 
 CREATE UNIQUE INDEX module_idx ON modules (name, version);

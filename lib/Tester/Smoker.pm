@@ -21,7 +21,6 @@ package Tester::Smoker {
         }
     };
     has 'config';
-    has 'build_dir';
 
     use Minion;
     has 'minion' => sub {
@@ -29,13 +28,23 @@ package Tester::Smoker {
       Minion->new( SQLite => 'sqlite:'. $self->database );
     };
 
-    use App::cpanminus::reporter;
+    use CPAN::Wrapper;
+    has 'cpan' => sub {
+        my ($self) = @_;
+        return CPAN::Wrapper->new(config => $self->config->{cpan},
+                                  log => $self->log,
+                                 );
+    };
+
+    has 'build_dir' => sub { die 'Obsolete build_dir attribute used'; };
+
+    # use App::cpanminus::reporter;
 
     sub new {
         my $class = shift;
         my $self = $class->SUPER::new(@_);
 
-        $self->build_dir(App::cpanminus::reporter->new->build_dir);
+        # $self->build_dir(App::cpanminus::reporter->new->build_dir);
         $self->sql->abstract(SQL::Abstract::More->new());
 
         $self->sql->migrations->name('smoker_migrations')->
@@ -47,6 +56,7 @@ package Tester::Smoker {
         if ($jmode->arrays->[0]->[0] ne 'wal') {
             warn 'Note: Write-ahead mode not enabled';
         }
+        $self->sql->db->query('PRAGMA foreign_keys=1;');
         
         return $self;
     }
@@ -102,12 +112,28 @@ package Tester::Smoker {
         }
     }
 
+    sub get_module_info {
+        # Retrieves the latest information for a module
+        my ($self, $module) = @_;
+        my $results = eval {
+            $self->sql->db->query('SELECT * FROM modules WHERE name=? ORDER BY released DESC LIMIT 1;', $module)->hashes;
+        };
+        return $results;
+    }
+
+    ################
+
     sub save_module_info {
         my ($self, $fields) = @_;
+
+        # results from /release have a 'main_module';
+        # with results from /module we use the name of the first (only?) module
+        my $module_name = eval { $fields->{module}->[0]->{name}; } // $fields->{main_module};
+        return undef unless defined $module_name;
         my $id = eval {
                 $self->sql->db->query('INSERT INTO modules(name, version, released, author, relative_url) '.
                                       'VALUES (?,?,?,?,?)',
-                                      $fields->{main_module},
+                                      $module_name,
                                       @{$fields}{qw(version date author download_url)})
                 ->last_insert_id;
             };
@@ -115,228 +141,93 @@ package Tester::Smoker {
     }
 
     sub update_module {
-        my ($self, $module_name) = @_;
+        # Retrieves, from metacpan, the information about the latest version of the module or release
+        # Returns the database id if we created a new record for an updated module; undef otherwise.
+        my ($self, $module_name, $type) = @_;  # optionally, type='release'
 
-        my $ua = Mojo::UserAgent->new();
-        my $source_url = Mojo::URL->new($self->config->{metacpan}->{release}); # API endpoint
-        push @{$source_url->path->parts}, 'CPAN';
-        my $result = $ua->get($source_url);
-        if ($result->res->{code} == 200) {
-            my $module_fields = $result->res->json;
+        my $module_fields = $self->cpan->get_module_info($module_name, $type);
+        if (defined $module_fields) {
             $module_fields->{_db_id} = $self->save_module_info($module_fields);  # keep new id value
-            return $module_fields;
+        }
+        return $module_fields;
+    }
+
+    ################
+
+    sub get_cpan_module {
+        # Returns record for the latest CPAN version from our
+        # database.  If none (e.g., empty database), or if different
+        # from the CPAN we have, update our db with the latest release
+        # info from metacpan.
+        my ($self) = @_;
+        my $cpan_module = $self->get_module_info('CPAN')->first;
+        if ((!defined $cpan_module) || ($cpan_module->{version} ne $self->cpan->version)) {
+            $self->update_module('CPAN','release');   # Fetch latest version from metacpan
+            $cpan_module = $self->get_module_info('CPAN')->first; # Could be a later one there
+        }
+        if (defined $cpan_module && ($cpan_module->{version} ne $self->cpan->version)) {
+            $self->log->warn ("Our cpan=$CPAN::VERSION but remote is ".$self->cpan->version);
+        }
+        return $cpan_module;
+    }
+
+    sub get_cpan_regex {
+        my ($self, $cpan_module) = @_;  # cpan_module presumably from get_cpan_module()
+        
+        my ($author, $version) = @{$cpan_module}{qw(author version)};
+        my $reason = "${author}/CPAN-${version}";
+        my $priority = 100;
+
+        my $source_url = $self->cpan->disabled_regex_url($author, $version);
+
+        # TODO: Finish this.
+        
+    }
+
+    ################
+
+    sub update {
+        my ($self, $source) = @_;
+
+        my $module_tgzs = $self->cpan->get_modules($source);
+        if (defined $module_tgzs) {
+          $module_tgzs->each(sub { $self->sql->db
+                                     ->query('INSERT OR REPLACE INTO modules(name, version, released, author, relative_url) '.
+                                             'VALUES (?,?,?,?,?)',
+                                             $_->{name}, $_->{version}, $_->{released}, $_->{author}, $_->{relative_url});
+                                 });
+          return $module_tgzs;
         }
         return undef;
     }
 
     ################################################################
 
-
-    # use Date::Parse;
-    my %months = (jan=>1,feb=>2,mar=>3,apr=>4,may=>5,jun=>6,jul=>7,aug=>8,sep=>9,oct=>10,nov=>11,dec=>12);
-
-    sub _dom_extract {
-        my $module_tgzs = shift;
-
-        my @modules;
-        $module_tgzs->each( sub {
-                                my $module_node = shift;
-                                my $module_info = {};
-                                @{$module_info}{qw(author name version)} = ( $module_node->attr('href') =~ # from the URL,
-                                                                             m{(\w+)/([^/]+?)-?v?([0-9a-z.]+)?\.tar\.gz}
-                                                                           ); # Extract into hash slice
-                                $module_info->{name} =~ s/-/::/g;
-
-                                # Extract content and remove any leading whitespace
-                                my $module_info_text = $module_node->next_node->content =~ s/\A\s+//r =~ s/\s+\z//r;
-                                ($module_info->{size}, my $m_day, my $m_mon, my $m_year) = split(/\s+/, $module_info_text, 4);
-                                # Convert human units to octets:
-                                $module_info->{size} =~ s/^([0-9.])+([kM])/$1*({k=>1024,M=>1024*1024}->{$2})/e;
-                                # use Date::Parse and do str2time() of
-                                # date for epoch timestamp, or simply
-                                # put into format SQLite understands:
-                                $module_info->{released} = sprintf('%4d-%02d-%02d', $m_year, $months{lc($m_mon)}, $m_day);
-                                push @modules, $module_info;
-                            } );
-        return Mojo::Collection->new(@modules);
-    }
-
-    sub enable_recent {
+    sub get_recent {
       # Get the list of most recently updated modules from source; default to
       # http://cpan.cpantesters.org/modules/01modules.mtime.html
+      # NOTE: the caller will probably create a Minion job to test each
       my ($self, $info, $source) = @_;
 
-      my $source_url = Mojo::URL->new($source // $self->app->config->{cpan_testers} );
-      push @{$source_url->path->parts},
-        'modules',
-        $self->app->config->{cpan_recent} // '01modules.mtime.html';
-
-      my $ua = Mojo::UserAgent->new();
-      my $module_dom = $ua->get($source_url)->result->dom;
-
-      # Create a list of modules
-      my $modules = _dom_extract($module_dom->find('a[href$=".tar.gz"]'));
-
-      $modules->each(sub { $self->app->db
-                             ->query('INSERT OR REPLACE INTO modules(name, version, released, author, relative_url) '.
-                                     'VALUES (?,?,?,?,?)',
-                                     $_->{name}, $_->{version}, $_->{released}, $_->{author}, $_->{relative_url});
-                         });
-
-      # Convert list to a regex which selects exactly those modules
-      my $regex = "^(?x:\n.^  # never matches, only purpose is to let things align nicely\n" .
-        '    # Recent modules list from ' . $source_url . "\n    |".
-        $modules->map( sub { $_->{name} . '  # Version ' . $_->{version} . '  ' . $_->{released} })->join("\n   |")     
-        . "\n)";
-      # Save regex in module_flags table
-      my $saved = $self->app->db->query('INSERT OR REPLACE INTO module_flags (priority, origin, author, disable, regex) '.
-                                        'VALUES (?,?,?,?,?)',
-                                        $info->{priority}, $info->{reason}, $info->{author}, $info->{disabled} // 0, $regex
-                                       );
-      return 1;
+      return $self->update($self->cpan->recent_url);
     }
 
     ################################################################
-
-    sub _text_line_extract {
-        my ($module_text) = @_;
-        
-        my $vals = {};          # populate with a hash slice:
-        @{$vals}{qw(name version relative_url)} = split /\s+/, $module_text;
-        $vals->{author} = ($vals->{relative_url} =~ m{^./../(\w+)/})[0];
-        $vals->{version} = undef if ($vals->{version} eq 'undef'); # Replace text 'undef'
-        return $vals;
-    }
-
-    sub _text_extract {
-        my ($module_text_list) = @_;
-      
-        # Extract from text file, skipping header, with header/body as SMTP message
-        my $header = 1;
-        my $module_tgzs = Mojo::Collection->new (
-                                              map {
-                                                  if ($header) {
-                                                      $header = $_ !~ /^$/; # false once we reach blank line
-                                                      (); # and skip this
-                                                  } else {
-                                                      _text_line_extract($_);
-                                                  }
-                                              } ( split (/\n/, $module_text_list ) )
-                                             );
-        return $module_tgzs;
-    }
-
-    sub update {
-        my ($self, $source) = @_;
-
-        my $module_list;
-        my $module_dom;
-
-        # If no source specified, load default remote module list
-        my $source_url = Mojo::URL->new($source // $self->config->{cpan_testers});
-
-        if ($source_url->protocol || $source_url->host) { # Remote file
-            unless (length($source_url->path) > 1) { # no path, or '/'
-                push @{$source_url->path->parts}, ( 'modules',
-                                                    $self->config->{cpan_modules} //
-                                                    '02packages.details.txt'
-                                                  );
-            }
-            my $ua = Mojo::UserAgent->new();
-            $module_list = $ua->get($source_url)->result;
-            die "Can't download modules list: ".$module_list->message
-                unless $module_list->is_success;
-            if ($source_url->path =~ /\.htm/) {
-                $module_dom = $module_list->dom;
-            } else {
-                $module_list = $module_list->body; # plaintext contents
-            }
-        } else {                # Local file
-            $module_list = Mojo::File->new( $source)->slurp;
-            die "No module list file" unless length($module_list);
-            $module_dom = Mojo::DOM->new($module_list) if ($module_list =~ /<html/i);
-        }
-
-        my $module_tgzs;
-        if (defined $module_dom) {
-          $module_tgzs = _dom_extract($module_dom->find('a[href$=".tar.gz"]'));
-        } else {
-          $module_tgzs = _text_extract($module_list);
-        }
-        ; $DB::single = 1;
-        $module_tgzs->each(sub { $self->sql->db
-                                   ->query('INSERT OR REPLACE INTO modules(name, version, released, author, relative_url) '.
-                                           'VALUES (?,?,?,?,?)',
-                                           $_->{name}, $_->{version}, $_->{released}, $_->{author}, $_->{relative_url});
-                               });
-        return $module_tgzs->size;
-    }
-
-    ################################################################
-
-    use YAML;
 
     sub save_regex {
-        my ($self, $source) = @_;
-
         # Save to the database, a local or remote copy of a regex
         # which will be applied against the list of modules, and which
         # will disable (or enable) them.
-
-        # If no source specified, load default remote file
-        my $source_url = Mojo::URL->new($source // $self->config->{cpan_source});
-        my $disabled_list;
-        my ($priority, $author, $version, $reason);
-
-        if ($source_url->protocol || $source_url->host) {
-            # Remote file.  Retrieve
-            # https://fastapi.metacpan.org/v1/release/CPAN and look at
-            # {version}
-            my $module = $self->update_module('CPAN');
-            ($author, $version) = @{$module}{qw(author version)};
-            if ($version ne CPAN::Wrapper::version()) {
-                $self->log->warn ("Our cpan=$CPAN::VERSION but remote is $version");
-            }
-
-            return 1 unless $module->{_db_id};  # Already in database; use cached instead of storing anew
-
-            $reason = "${author}/CPAN-${version}";
-            $priority = 100;    # Default for remote file
-            unless ($source_url->path  =~ /\.\w+/) { # If just a path, without a filename+extension: use default
-                push @{$source_url->path->parts}, ( $author,
-                                                    'CPAN-' . $version,
-                                                    'distroprefs',
-                                                    $self->config->{cpan_disable} //
-                                                    '01.DISABLED.yml'
-                                                  );
-                $source_url->path->trailing_slash(0);
-                my $ua = Mojo::UserAgent->new();
-                $disabled_list = $ua->get($source_url)->result;
-                unless ($disabled_list->is_success) {
-                    $self->log->warn("Can't download disabled list: ".$disabled_list->message);
-                    return 0;
-                }
-                $disabled_list = $disabled_list->body;
-            }
-        } else {
-            # Local file
-            $reason = $source;
-            $priority = 50;     # Default for local
-            $disabled_list = Mojo::File->new( $source)->slurp;
-            unless (length($disabled_list)) {
-                $self->log->error("No module list file");
-                return 0;
-            }
+        my ($self, $source) = @_;
+        my $regex = $self->cpan->load_regex($source);
+        if (defined $regex) {
+          my $saved = $self->sql->db->query('INSERT OR REPLACE INTO module_flags (priority, origin, author, disable, regex) '.
+                                            'VALUES (?,?,?,?,?)',
+                                            @{$regex}{qw(priority reason author disabled regex)}
+                                           );
+          return 1;
         }
-
-        # Decode and save as meta-information in the Modules list
-        my $matchfile = eval{YAML::Load($disabled_list)};
-        my $saved = $self->sql->db->query('INSERT OR REPLACE INTO module_flags (priority, origin, author, disable, regex) '.
-                                          'VALUES (?,?,?,?,?)',
-                                          $priority, $reason, $author, $matchfile->{disabled}, $matchfile->{match}{distribution}
-                                         );
-        
-        1;
+        return undef;
     }
 
     ################################################################
