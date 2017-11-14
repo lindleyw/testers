@@ -184,13 +184,13 @@ package main::Command::regex {
 
 ################################################################
 
-package main::Command::enable_recent {
+package main::Command::queue_recent {
     use Mojo::Base 'Mojolicious::Command';
 
     sub run {
         my ($self, @args) = @_;
 
-        return $self->app->smoker->enable_recent(@args);
+        return $self->app->smoker->get_recent(@args);
     }
 };
 

@@ -208,7 +208,7 @@ package Tester::Smoker {
       # http://cpan.cpantesters.org/modules/01modules.mtime.html
       # NOTE: the caller will probably create a Minion job to test each
       my ($self, $info, $source) = @_;
-
+      ; $DB::single = 1;
       return $self->update($self->cpan->recent_url);
     }
 

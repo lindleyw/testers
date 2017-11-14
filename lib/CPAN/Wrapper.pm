@@ -15,12 +15,21 @@ package CPAN::Wrapper {
     };
 
     # A wrapper module for CPAN testing and reporting
+    #
+    # TODO: Possibly release this as an official module, perhaps under
+    # https://metacpan.org/pod/CPAN::Testers
 
-    use CPAN;           # Must be inside a module, not the main program, because we don't want to *run* cpan!
+    use CPAN;           # Must be inside a module, not the main
+                        # program, because we don't want to *run*
+                        # cpan!
 
     sub version {
         return $CPAN::VERSION;
     }
+
+    #
+    # To explore the MetaCPAN API, see: https://explorer.metacpan.org/
+    #
 
     # NOTE:  Possibly for later use, given further CPAN refactoring
     # 
