@@ -64,7 +64,7 @@ sub _add_test {
 }
 
 sub _find_recent {
-    my ($self, $mod_info) = @_;
+    my ($self, $mod_info, $limit) = @_;
 
     # example of passing more complex queries to _find_recent:
     #   _find_recent($self,{author =>'ANDK', name => {'LIKE', 'CPAN%'}})
@@ -82,8 +82,14 @@ sub _find_recent {
                                            },
                                  -group_by => ['name'],
                                  -order_by => ['-added'],  # most-recent first
+                                 (defined $limit) ? (-limit => $limit) : (),
                                );
     return $modules->hashes;      # as a Mojo::Collection
+}
+
+sub _find_recent_days {
+    my ($self, $day_count, $limit) = @_;
+    return _find_recent($self,{added => {'>',\["datetime('now', ?)", -$day_count.' days']}}, $limit)
 }
 
 # TODO: api for selecting the number of modules added on a given date
@@ -96,6 +102,8 @@ sub _find_recent {
 package main::Command::list {
     use Mojo::Base 'Mojolicious::Command';
     use Minion::Backend;
+
+    has 'description' => '';
 
     sub module_info {
         my ($self, $id) = @_;
@@ -141,6 +149,8 @@ package main::Command::reload {
     # formerly 'update' command, this reloads the entire CPAN list.
     use Mojo::Base 'Mojolicious::Command';
 
+    has 'description' => '';
+
     sub run {
         my ($self, @args) = @_;
 
@@ -153,6 +163,8 @@ package main::Command::reload {
 package main::Command::update_perl_versions {
     use Mojo::Base 'Mojolicious::Command';
 
+    has 'description' => '';
+
     sub run {
         my ($self, @args) = @_;
 
@@ -163,6 +175,8 @@ package main::Command::update_perl_versions {
 package main::Command::update_module {
     use Mojo::Base 'Mojolicious::Command';
 
+    has 'description' => '';
+
     sub run {
         my ($self, @args) = @_;
 
@@ -170,10 +184,24 @@ package main::Command::update_module {
     }
 };
 
+package main::Command::test_module {
+    use Mojo::Base 'Mojolicious::Command';
+
+    has 'description' => '';
+
+    sub run {
+        my ($self, @args) = @_;
+
+        return 0;
+    }
+};
+
 ################################################################
 
 package main::Command::regex {
     use Mojo::Base 'Mojolicious::Command';
+
+    has 'description' => '';
 
     sub run {
         my ($self, @args) = @_;
@@ -188,10 +216,14 @@ package main::Command::regex {
 package main::Command::update {
     use Mojo::Base 'Mojolicious::Command';
 
+    has 'description' => "Retrieves and saves CPAN's list of recently-updated modules";
+
     sub run {
         my ($self, @args) = @_;
 
-        return $self->app->smoker->get_recent(@args);
+        my $rrr = $self->app->smoker->get_recent(@args);
+        ; $DB::single = 1;
+        print "xxx";
     }
 };
 
@@ -199,6 +231,8 @@ package main::Command::update {
 
 package main::Command::module {
     use Mojo::Base 'Mojolicious::Command';
+
+    has 'description' => '';
 
     sub run {
         my ($self, @args) = @_;
@@ -215,6 +249,8 @@ package main::Command::module {
 package main::Command::apply {
     use Mojo::Base 'Mojolicious::Command';
 
+    has 'description' => '';
+
     sub run {
         my ($self, @args) = @_;
 
@@ -230,6 +266,8 @@ package main::Command::apply {
 package main::Command::create {
     use Mojo::Base 'Mojolicious::Command';
 
+    has 'description' => '';
+
     sub run {
         my ($self, @selected_modules) = @_;
     }
@@ -244,6 +282,8 @@ package main::Command::create {
 package main::Command::do {
     use Mojo::Base 'Mojolicious::Command';
 
+    has 'description' => 'Run any enqueued tests immediately, without using Minion workers';
+
     sub run {
         my ($self) = @_;
         $self->smoker->minion->perform_jobs();
@@ -256,6 +296,8 @@ package main::Command::do {
 package main::Command::rebuild {
 
     use Mojo::Base 'Mojolicious::Command';
+
+    has 'description' => 'Discard the entire testing database and rebuild its structure.';
 
     sub run {
       my ($self) = @_;
@@ -275,6 +317,7 @@ package main::Command::rebuild {
 push @{app->commands->namespaces}, 'main::Command';
 
 plugin 'Config';
+
 
 # plugin 'Minion' => { SQLite => 'sqlite:'. app->config->{dbname} };
 
@@ -307,6 +350,7 @@ helper smoker => sub {
                                         count    => $count,
                                         force_test => $force_test,
                                         verbose  => $verbose,
+                                        app => $self->app,
                                        );
     
 };
@@ -321,9 +365,12 @@ helper db => sub {
     state $db = $self->sql->db;
 };
 
+plugin Minion => {SQLite => 'sqlite:'. app->config->{dbname}};
+plugin 'Minion::Admin';
+
 ################
 
-app->smoker->minion->add_task( test => sub { my ($job, @args) = @_;
+app->minion->add_task( test => sub { my ($job, @args) = @_;
                                      my ($result, @result_args) = $job->app->smoker->test($job, @args);
                                      if ($result eq 'success') {
                                          $job->finished(@result_args);
@@ -369,57 +416,70 @@ get '/tests/:modname' => sub {
     }
 };
 
-app->smoker->minion->add_task( update => sub { my ($job, @args) = @_;
-                                       my ($result, @result_args) = $job->app->smoker->update(@args);
-                                       if ($result eq 'success') {
-                                           $job->finished(@result_args);
-                                       } elsif ($result eq 'error') {
-                                           $job->fail(@result_args);
-                                       } else {
-                                           # TODO: Better define why/when this can happen
-                                           # $job->retry(@result_args);
-                                       }
-                                   } );
+# app->minion->add_task( update => sub { my ($job, @args) = @_;
+#                                        my ($result, @result_args) = $job->app->smoker->update(@args);
+#                                        if ($result eq 'success') {
+#                                            $job->finished(@result_args);
+#                                        } elsif ($result eq 'error') {
+#                                            $job->fail(@result_args);
+#                                        } else {
+#                                            # TODO: Better define why/when this can happen
+#                                            # $job->retry(@result_args);
+#                                        }
+#                                    } );
+
+app->minion->add_task ( update => sub { my ($job, @args) = @_;
+                                                my $results = $job->app->smoker->get_recent(@args);
+                                                if (defined $results) {
+                                                    ; $DB::single = 1;
+                                                    # TODO: possibly:
+                                                    # $job->app->minion->enqueue('check_regex', ... ?
+                                                    $job->finished();
+                                                } else {
+                                                    $job->fail('Could not download updates list')
+                                                }
+                                            }
+                              );
 
 get '/update' => sub {
     my ($self) = @_;
     ; $DB::single = 1;
-    my $id = $self->smoker->minion->enqueue('update', {priority => 0});
+    my $id = $self->minion->enqueue('update', {priority => 0});
     $self->render(json => {job => {task => 'update', id => $id}});
 };
 
 get '/update/*uri' => sub {
     my ($self) = @_;
-    my $id = $self->smoker->minion->enqueue('update' => [$self->stash('uri')], {priority => 0});
+    my $id = $self->minion->enqueue('update' => [$self->stash('uri')], {priority => 0});
     $self->render(json => {job => {task => 'update', id => $id}});
 };
 
-app->smoker->minion->add_task( apply => sub { my ($job, @args) = @_;
+app->minion->add_task( apply => sub { my ($job, @args) = @_;
                                       apply( $job->app, @args);
                                       # probably call $job->finished($message) or $job->fail($message)
                                    } );
 
 get '/apply' => sub {
     my ($self) = @_;
-    my $id = $self->smoker->minion->enqueue('apply', {priority => 0});
+    my $id = $self->minion->enqueue('apply', {priority => 0});
     $self->render(json => {job => {task => 'apply', id => $id}});
 };
 
 get '/job/:id' => sub {
     my ($self) = @_;
-    my $job = $self->smoker->minion->job($self->stash('id'));
+    my $job = $self->minion->job($self->stash('id'));
     $self->render(json => $job->info);
 };
 
 del '/job/:id' => sub {
     my ($self) = @_;
-    my $deleted = $self->smoker->minion->job($self->stash('id'))->remove;
+    my $deleted = $self->minion->job($self->stash('id'))->remove;
     $self->render(json => {success => $deleted});
 };
 
 get '/jobs/stats' => sub {
     my ($self) = @_;
-    my $stats = $self->smoker->minion->stats;
+    my $stats = $self->minion->stats;
     $self->render(json => $stats);
 };
 

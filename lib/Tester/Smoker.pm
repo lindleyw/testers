@@ -17,16 +17,26 @@ package Tester::Smoker {
     has 'sql' => sub { # Set during instantiation; or, create object
         my ($self) = @_;
         if (defined $self->database) {
-            Mojo::SQLite->new('sqlite:' . $self->database);
+            my $db = Mojo::SQLite->new('sqlite:' . $self->database);
+            $db->abstract(SQL::Abstract::More->new());
+            return $db;
         }
     };
     has 'config';
 
-    use Minion;
-    has 'minion' => sub {
-      my ($self) = @_;
-      Minion->new( SQLite => 'sqlite:'. $self->database );
-    };
+    #   ADDED, TRYING TO USE ADMIN UI:
+    # has 'app';   # So we can insert Minion plugin into it
+    
+    # # WAS WORKING:
+    # use Minion;
+    # has 'minion' => sub {
+    #     my ($self) = @_;
+    #     Minion->new( SQLite => 'sqlite:'. $self->database );
+    #     #
+    #     # TRYING TO USE ADMIN UI:
+    #     # $self->app->plugin(Minion => {SQLite => 'sqlite:'. $self->database });
+    #     # $self->app->plugin('Minion::Admin');
+    # };
 
     use CPAN::Wrapper;
     has 'cpan' => sub {
@@ -45,7 +55,6 @@ package Tester::Smoker {
         my $self = $class->SUPER::new(@_);
 
         # $self->build_dir(App::cpanminus::reporter->new->build_dir);
-        $self->sql->abstract(SQL::Abstract::More->new());
 
         $self->sql->migrations->name('smoker_migrations')->
           from_file('sqlite_migrations');
@@ -191,12 +200,18 @@ package Tester::Smoker {
 
         my $module_tgzs = $self->cpan->get_modules($source);
         if (defined $module_tgzs) {
-          $module_tgzs->each(sub { $self->sql->db
-                                     ->query('INSERT OR REPLACE INTO modules(name, version, released, author, relative_url) '.
-                                             'VALUES (?,?,?,?,?)',
-                                             $_->{name}, $_->{version}, $_->{released}, $_->{author}, $_->{relative_url});
-                                 });
-          return $module_tgzs;
+            $module_tgzs->each(sub {
+                                   $_->{id} = eval {$self->sql->db->insert(-into => 'modules',
+                                                                           -values => {%$_{qw(name version
+                                                                                              released author
+                                                                                              relative_url)}},
+                                                                          )->last_insert_id;
+                                                };
+                                       
+                               });
+            ; $DB::single = 1;
+            print "xxx";
+            return $module_tgzs;
         }
         return undef;
     }
@@ -208,7 +223,6 @@ package Tester::Smoker {
       # http://cpan.cpantesters.org/modules/01modules.mtime.html
       # NOTE: the caller will probably create a Minion job to test each
       my ($self, $info, $source) = @_;
-      ; $DB::single = 1;
       return $self->update($self->cpan->recent_url);
     }
 
@@ -232,30 +246,57 @@ package Tester::Smoker {
 
     ################################################################
 
-    sub _apply_regexes {
+    sub _check_regexes {
+        # Apply, in priority order, all defined regular expressions
+        # which could enable or disable the selected module.  Set
+        # disabled_by in the module database accordingly.
         my ($self, $module_id) = @_; 
 
         # For each available enable/disable list, prepare to apply in priority order
-        my $regex_list = eval{$self->sql->db->query('SELECT * FROM module_flags ORDER BY priority DESC, added DESC');};
+        my $regex_list = eval{
+            $self->sql->db->select(-from => 'module_flags',
+                                   -order_by => [{-desc => 'priority'}, {-desc => 'added'}],
+                                  );
+        };
         return undef unless defined $regex_list;
         $regex_list = $regex_list->hashes;
 
-        my $module_info = $self->sql->db->query('SELECT * FROM modules WHERE id=?', $module_id)->hashes;
-        return 1 unless $module_info;
-        $module_info = $module_info->first;
-        my $disabled = 0;
-        my $disabled_by;
+        my $module_info = eval {
+            $self->sql->db->select(-from => 'modules',
+                                   -where => {id => {-in => $module_id}},
+                                   # ok for scalar or arrayref
+                                  )->hashes;
+        };
+        return unless $module_info;
 
-        $regex_list->each( sub {
-                               if ( join('/', $module_info->{author}, $module_info->{name}) =~ $_->{regex} ) {
-                                   $disabled = $_->{disable};
-                                   $disabled_by = $disabled ? $_->{id} : undef;
-                               }
-                           } );
-        # Save final enabled/disabled status
-        eval { $self->sql->db->query('UPDATE modules SET disabled_by = ? WHERE id = ?',
-                             $disabled_by, $module_info->{id}); };
-        return $disabled;
+        $module_info->each( sub {
+                                my $module_id = $_->{id};
+                                my $regex_match = join('/', $module_info->{author}, $module_info->{name});
+                                my $disabled_by;
+                                $regex_list->each(sub {
+                                                      if ($regex_match =~ $_->{regex}) {
+                                                          if ($_->{disable}) {
+                                                              $disabled_by = $_->{origin};
+                                                          } else {
+                                                              undef $disabled_by; # enable
+                                                          }
+                                                      }
+                                                  });
+                                # Save final enabled/disabled status
+                                eval { $self->sql->db->update(-name => 'modules',
+                                                              -set => { disabled_by => $disabled_by },
+                                                              -where => { id => $module_info->{id} })
+                                   };
+                            } );
+    }
+
+    sub check_regex {
+        my $self = shift;
+        my $minion_job = shift;
+        my $args = {@_};
+
+        $self->_check_regexes($args->{module_id});   # scalar or arrayref OK
+
     }
 
     ################################################################
@@ -283,7 +324,7 @@ package Tester::Smoker {
         $module_info = $module_info->first;
 
         # Check against 'disabled' regex; if matches, fail with error.
-        if ($self->_apply_regexes($module_id)) {  # module is disabled
+        if (!$self->_enabled_after_regexes($module_id)) {  # module is disabled
             $self->log->warn("module is disabled");
             $minion_job->fail("module is disabled");
             return 0;

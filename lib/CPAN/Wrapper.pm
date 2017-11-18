@@ -152,7 +152,7 @@ package CPAN::Wrapper {
       my $module_list;
       my $module_dom;
 
-      ; $DB::single = 1;
+      # ; $DB::single = 1;
 
       # If no source specified, load default remote module list
       my $source_url = Mojo::URL->new($source // $self->config->{cpan_testers});
