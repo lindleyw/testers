@@ -23,42 +23,52 @@ package Tester::Smoker {
         }
     };
     has 'config';
-
-    #   ADDED, TRYING TO USE ADMIN UI:
-    # has 'app';   # So we can insert Minion plugin into it
-    
-    # # WAS WORKING:
-    # use Minion;
-    # has 'minion' => sub {
-    #     my ($self) = @_;
-    #     Minion->new( SQLite => 'sqlite:'. $self->database );
-    #     #
-    #     # TRYING TO USE ADMIN UI:
-    #     # $self->app->plugin(Minion => {SQLite => 'sqlite:'. $self->database });
-    #     # $self->app->plugin('Minion::Admin');
-    # };
+    has '_update_regex'; # Flag set when we find a new version of
+                         # CPAN, to remind us to fetch and save the
+                         # appropriate new regex
 
     use CPAN::Wrapper;
     has 'cpan' => sub {
         my ($self) = @_;
-        return CPAN::Wrapper->new(config => $self->config->{cpan},
+        my $cpan = CPAN::Wrapper->new(config => $self->config->{cpan},
                                   log => $self->log,
-                                 );
+                                     );
+
+        # Returns record for the latest CPAN version from our
+        # database.  If none (e.g., empty database), or if different
+        # from the CPAN we have, update our db with the latest release
+        # info from metacpan.
+        my $cpan_module = $self->get_module_info('CPAN')->first;
+        if ((!defined $cpan_module) || ($cpan_module->{version} ne $cpan->version)) {
+            # NOTE: We cannot use $self->update_module() here, because
+            # that depends on the $self->cpan object, which we haven't
+            # defined yet.
+            $cpan_module = $cpan->get_module_info('CPAN','release');   # Fetch latest version from metacpan
+            if (defined $cpan_module) {
+                $cpan_module->{_db_id} = $self->save_module_info($cpan_module);  # keep new id value
+                $self->_update_regex(1);
+            }
+        }
+        if (defined $cpan_module && ($cpan->version ne $cpan_module->{version})) {
+            ### NOTE: As of 2017-11-20, Perlbrew install cpan version
+            ### 2.18 but metacpan says latest is 2.16.  This is
+            ### probably not harmful, but ideally these should
+            ### match. This condition forces the above code to ask
+            ### metacpan during initialization of each web instance or
+            ### worker.
+            $self->log->warn ("Our cpan=". $cpan->version ." but remote is ". $cpan_module->{version});
+        }
+
+        $cpan->current_cpan({%{$cpan_module}{qw(version author)}}); # Completes the cpan object's attributes
+        return $cpan;
     };
-
-    has 'build_dir' => sub { die 'Obsolete build_dir attribute used'; };
-
-    # use App::cpanminus::reporter;
 
     sub new {
         my $class = shift;
         my $self = $class->SUPER::new(@_);
 
-        # $self->build_dir(App::cpanminus::reporter->new->build_dir);
-
         $self->sql->migrations->name('smoker_migrations')->
           from_file('sqlite_migrations');
-          # from_data('main', 'sqlite_migrations');
 
         $self->sql->migrations->tap(sub { $self->rebuild and $_->migrate(0) })->migrate;
         my $jmode = $self->sql->db->query('PRAGMA journal_mode=WAL;');
@@ -121,6 +131,103 @@ package Tester::Smoker {
         }
     }
 
+    ################################################################
+
+    sub fetch_and_save_regex {
+        # Save to the database, a local or remote copy of a regex
+        # which will be applied against the list of modules, and which
+        # will disable (or enable) them.
+        my ($self, $source) = @_;
+
+        my $regex = $self->cpan->load_regex($source);
+        if (defined $regex) {
+          my $saved = $self->sql->db->query('INSERT OR REPLACE INTO module_flags (priority, origin, author, disable, regex) '.
+                                            'VALUES (?,?,?,?,?)',
+                                            @{$regex}{qw(priority reason author disabled regex)}
+                                           );
+          return 1;
+        }
+        return undef;
+    }
+
+    sub load_regexes {
+        my ($self) = @_; 
+
+        # For each available enable/disable list, prepare to apply in priority order
+        my $regex_list = eval{
+            $self->sql->db->select(-from => 'module_flags',
+                                   -order_by => [{-desc => 'priority'}, {-desc => 'added'}],
+                                  )->hashes;
+        };
+        return undef if ( (!defined $regex_list) || ($regex_list->size ==0));
+        return $regex_list;
+    }
+
+    ################################################################
+
+    sub _check_regexes {
+        # Apply, in priority order, all defined regular expressions
+        # which could enable or disable the selected module.  Set
+        # disabled_by in the module database accordingly.
+        my ($self, $module_id) = @_; 
+
+        # For each available enable/disable list, prepare to apply in priority order
+        my $regex_list = $self->load_regexes;
+        if (!defined $regex_list || $self->_update_regex) {
+            if ($self->fetch_and_save_regex()) {   # Retrieve regex from default source
+                $regex_list = $self->load_regexes; # and reload from database
+                $self->_update_regex(0);
+            } else {
+                $self->log->error("Failed to retrieve regex");
+            }
+        }
+        return undef unless defined $regex_list;
+
+        my $module_info = eval {
+            $self->sql->db->select(-from => 'modules',
+                                   -where => {id => {-in => $module_id}},
+                                   # ok for scalar or arrayref
+                                  )->hashes;
+        };
+        return undef unless defined $module_info;
+
+        $module_info->each( sub {
+                                my $module_id = $_->{id};
+                                my $regex_match = join('/', $_->{author}, $_->{name});
+                                my $disabled_by;
+                                $regex_list->each(sub {
+                                                      if ($regex_match =~ $_->{regex}) {
+                                                          if ($_->{disable}) {
+                                                              $disabled_by = $_->{origin};
+                                                          } else {
+                                                              undef $disabled_by; # enable
+                                                          }
+                                                      }
+                                                  });
+                                # Save final enabled/disabled status
+                                eval { $self->sql->db->update(-name => 'modules',
+                                                              -set => { disabled_by => $disabled_by },
+                                                              -where => { id => $module_info->{id} });
+                                       $self->log->info("Module $_->{name} disabled by regex");
+                                   };
+                            } );
+        return 1;
+    }
+
+    sub check_regex {
+        my $self = shift;
+        # my $minion_job = shift;
+        my $args = {@_};
+
+        if (ref $args->{module_id} eq 'Mojo::Collection') { # Flatten into array of id values
+            $args->{module_id} = $args->{module_id}->map(sub {$_->{id}})->to_array;
+        }
+        $self->_check_regexes($args->{module_id});   # scalar or arrayref OK
+
+    }
+
+    ################################################################
+
     sub get_module_info {
         # Retrieves the latest information for a module
         my ($self, $module) = @_;
@@ -163,41 +270,10 @@ package Tester::Smoker {
 
     ################
 
-    sub get_cpan_module {
-        # Returns record for the latest CPAN version from our
-        # database.  If none (e.g., empty database), or if different
-        # from the CPAN we have, update our db with the latest release
-        # info from metacpan.
-        my ($self) = @_;
-        my $cpan_module = $self->get_module_info('CPAN')->first;
-        if ((!defined $cpan_module) || ($cpan_module->{version} ne $self->cpan->version)) {
-            $self->update_module('CPAN','release');   # Fetch latest version from metacpan
-            $cpan_module = $self->get_module_info('CPAN')->first; # Could be a later one there
-        }
-        if (defined $cpan_module && ($cpan_module->{version} ne $self->cpan->version)) {
-            $self->log->warn ("Our cpan=$CPAN::VERSION but remote is ".$self->cpan->version);
-        }
-        return $cpan_module;
-    }
-
-    sub get_cpan_regex {
-        my ($self, $cpan_module) = @_;  # cpan_module presumably from get_cpan_module()
-        
-        my ($author, $version) = @{$cpan_module}{qw(author version)};
-        my $reason = "${author}/CPAN-${version}";
-        my $priority = 100;
-
-        my $source_url = $self->cpan->disabled_regex_url($author, $version);
-
-        # TODO: Finish this.
-        
-    }
-
-    ################
-
     sub update {
         my ($self, $source) = @_;
 
+        # Get a list of modules from the source
         my $module_tgzs = $self->cpan->get_modules($source);
         if (defined $module_tgzs) {
             $module_tgzs->each(sub {
@@ -207,13 +283,16 @@ package Tester::Smoker {
                                                                                               relative_url)}},
                                                                           )->last_insert_id;
                                                 };
-                                       
+                                   if (!defined $_->{id}) {  # Probably already existed
+                                       $_->{id} = eval { my $g = $self->sql->db->select(-from => 'modules',
+                                                                                        -where => {%$_{qw(name version)}});
+                                                         $g->hashes->first->{id};
+                                                     };
+                                   }
                                });
-            ; $DB::single = 1;
-            print "xxx";
-            return $module_tgzs;
+            $self->log->info("got updated module list");
         }
-        return undef;
+        return $module_tgzs;
     }
 
     ################################################################
@@ -224,79 +303,6 @@ package Tester::Smoker {
       # NOTE: the caller will probably create a Minion job to test each
       my ($self, $info, $source) = @_;
       return $self->update($self->cpan->recent_url);
-    }
-
-    ################################################################
-
-    sub save_regex {
-        # Save to the database, a local or remote copy of a regex
-        # which will be applied against the list of modules, and which
-        # will disable (or enable) them.
-        my ($self, $source) = @_;
-        my $regex = $self->cpan->load_regex($source);
-        if (defined $regex) {
-          my $saved = $self->sql->db->query('INSERT OR REPLACE INTO module_flags (priority, origin, author, disable, regex) '.
-                                            'VALUES (?,?,?,?,?)',
-                                            @{$regex}{qw(priority reason author disabled regex)}
-                                           );
-          return 1;
-        }
-        return undef;
-    }
-
-    ################################################################
-
-    sub _check_regexes {
-        # Apply, in priority order, all defined regular expressions
-        # which could enable or disable the selected module.  Set
-        # disabled_by in the module database accordingly.
-        my ($self, $module_id) = @_; 
-
-        # For each available enable/disable list, prepare to apply in priority order
-        my $regex_list = eval{
-            $self->sql->db->select(-from => 'module_flags',
-                                   -order_by => [{-desc => 'priority'}, {-desc => 'added'}],
-                                  );
-        };
-        return undef unless defined $regex_list;
-        $regex_list = $regex_list->hashes;
-
-        my $module_info = eval {
-            $self->sql->db->select(-from => 'modules',
-                                   -where => {id => {-in => $module_id}},
-                                   # ok for scalar or arrayref
-                                  )->hashes;
-        };
-        return unless $module_info;
-
-        $module_info->each( sub {
-                                my $module_id = $_->{id};
-                                my $regex_match = join('/', $module_info->{author}, $module_info->{name});
-                                my $disabled_by;
-                                $regex_list->each(sub {
-                                                      if ($regex_match =~ $_->{regex}) {
-                                                          if ($_->{disable}) {
-                                                              $disabled_by = $_->{origin};
-                                                          } else {
-                                                              undef $disabled_by; # enable
-                                                          }
-                                                      }
-                                                  });
-                                # Save final enabled/disabled status
-                                eval { $self->sql->db->update(-name => 'modules',
-                                                              -set => { disabled_by => $disabled_by },
-                                                              -where => { id => $module_info->{id} })
-                                   };
-                            } );
-    }
-
-    sub check_regex {
-        my $self = shift;
-        my $minion_job = shift;
-        my $args = {@_};
-
-        $self->_check_regexes($args->{module_id});   # scalar or arrayref OK
-
     }
 
     ################################################################

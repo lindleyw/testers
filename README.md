@@ -12,6 +12,12 @@ results:
 
 http://blogs.perl.org/users/preaction/2017/07/cpan-testers-has-an-api.html
 
+REQUIREMENTS:
+
+   $ cpanm Mojolicious Mojo::SQLite Minion Minion::Backend::SQLite\
+     YAML App::cpanminus::reporter SQL::Abstract::More
+
+
 
 This uses Mojo and Minion to divide the testing into steps, each of
 which is performed and controlled by the Minion job queue.

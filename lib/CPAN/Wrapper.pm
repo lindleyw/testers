@@ -7,7 +7,10 @@ package CPAN::Wrapper {
 
     has 'log';
     has 'config';
+    has 'current_cpan';  # Author and version of latest CPAN we know about
 
+    ### NOTE: This module must be installed on all candidate Perlbrew
+    ### installations so we can locate the various log files
     use App::cpanminus::reporter;
 
     has 'build_dir' => sub {
@@ -23,7 +26,7 @@ package CPAN::Wrapper {
                         # program, because we don't want to *run*
                         # cpan!
 
-    sub version {
+    sub version {       # As installed on this system
         return $CPAN::VERSION;
     }
 
@@ -50,8 +53,8 @@ package CPAN::Wrapper {
         my $ua = Mojo::UserAgent->new();
         my $source_url = Mojo::URL->new($self->config->{metacpan}->{$type // 'module'}); # API endpoint
         push @{$source_url->path->parts}, $module_name;
-        my $result = $ua->get($source_url);
-        if ($result->res->{code} == 200) {
+        my $result = eval { $ua->get($source_url); };
+        if (defined $result && $result->res->{code} == 200) {
             my $module_fields = $result->res->json;
             return $module_fields;
         }
@@ -61,10 +64,11 @@ package CPAN::Wrapper {
     ################
 
     sub disabled_regex_url {
-      my ($self, $author, $version) = @_;
+      my ($self) = @_;
       my $source_url = Mojo::URL->new($self->config->{source});
-      push @{$source_url->path->parts}, ( $author,
-                                          'CPAN-' . $version,
+      return undef unless defined $self->current_cpan;
+      push @{$source_url->path->parts}, ( $self->current_cpan->{author},
+                                          'CPAN-' . $self->current_cpan->{version},
                                           'distroprefs',
                                           $self->config->{disable} //
                                           '01.DISABLED.yml'
@@ -157,32 +161,37 @@ package CPAN::Wrapper {
       # If no source specified, load default remote module list
       my $source_url = Mojo::URL->new($source // $self->config->{cpan_testers});
       if ($source_url->protocol || $source_url->host) { # Looks like a remote file
-        unless (length($source_url->path) > 1) { # no path, or '/'
-          push @{$source_url->path->parts}, ( 'modules',
-                                              $self->config->{cpan}->{modules} //
-                                              '02packages.details.txt'
-                                            );
-        }
-        my $ua = Mojo::UserAgent->new();
-        $module_list = $ua->get($source_url)->result;
-        if ($module_list->is_success) {
-          if ($source_url->path =~ /\.htm/) {
-            $module_dom = $module_list->dom;
-          } else {
-            $module_list = $module_list->body; # plaintext contents
+          unless (length($source_url->path) > 1) { # no path, or '/'
+              push @{$source_url->path->parts}, ( 'modules',
+                                                  $self->config->{cpan}->{modules} //
+                                                  '02packages.details.txt'
+                                                );
           }
-        } else {
-          $self->log->error("Can't download modules list: ".$module_list->message);
-          return undef;
-        }
-      } else {                  # Local file
-        $module_list = Mojo::File->new($source)->slurp;
-        if (length($module_list)) {
-          $module_dom = Mojo::DOM->new($module_list) if ($module_list =~ /<html/i);
-        } else {
-          $self->log->error("No module list file");
-          return undef;
-        }
+          my $ua = Mojo::UserAgent->new();
+          $module_list = eval { $ua->get($source_url)->result; };
+          if (defined $module_list) {
+              if ($module_list->is_success) {
+                  if ($source_url->path =~ /\.htm/) {
+                      $module_dom = $module_list->dom;
+                  } else {
+                      $module_list = $module_list->body; # plaintext contents
+                  }
+              } else {
+                  $self->log->error("Can't download modules list: ".$module_list->message);
+                  return undef;
+              }
+          } else {
+              $self->log->error("Can't download modules list: ".$@);
+              return undef;
+          }
+      } else {                # Local file
+          $module_list = Mojo::File->new($source)->slurp;
+          if (length($module_list)) {
+              $module_dom = Mojo::DOM->new($module_list) if ($module_list =~ /<html/i);
+          } else {
+              $self->log->error("No module list file");
+              return undef;
+          }
       }
 
       my $module_tgzs;
@@ -207,19 +216,36 @@ package CPAN::Wrapper {
         # (or enable) them.
 
         # If no source specified, load default remote file
-        my $use_latest = defined $source;
-        my $source_url = $use_latest ? Mojo::URL->new($source) : $self->disabled_regex_url;
-        my ($disabled_list, $priority, $author, $version, $reason);
+        my $use_latest = !defined $source;
+
+        ###
+        ###  XXXX: ERROR:  disable_regex_url() requires author, version ... where to get from?
+        ###  how does this work w/r/t Smoker::get_cpan_module (from database etc)
+        ###
+        my $source_url = $use_latest ? $self->disabled_regex_url : Mojo::URL->new($source);
+        my ($disabled_list, $priority, $author, $reason);
+
+        # ; $DB::single = 1;
 
         if ($source_url->protocol || $source_url->host) { # looks like a URL
             if ($use_latest) {
-                my $cpan_module = $self->get_cpan_module;
-            
-                ($author, $version) = @{$cpan_module}{qw(author version)};
-                if ($version ne version()) {
-                    $self->log->warn ("Our cpan=$CPAN::VERSION but remote is $version");
+                my $cpan = $self->current_cpan;
+                if (!defined $cpan) {
+                    $self->log->error("Can't find current CPAN for regex");
+                    return undef;
                 }
-                ($reason, $priority) = ("${author}/CPAN-${version}", 100); # Default for remote file
+                $source = $self->disabled_regex_url();
+                if (!defined $source) {
+                    $self->log->error("Can't load CPAN regex URL");
+                    return undef;
+                }
+                $source_url = Mojo::URL->new($source);
+                $reason = $cpan->{author} . '/CPAN-' . $cpan->{version};
+                $priority = 100;
+
+                if ($cpan->{version} ne version()) {
+                    $self->log->warn ("Our cpan=".version()." but remote is ". $cpan->{version});
+                }
             } else {
                 ($reason, $priority) = ($source, 100); # Save exact remote source.
                 # TODO: What to store for Author, Version?
@@ -253,7 +279,6 @@ package CPAN::Wrapper {
         }
         return { priority => $priority,
                  reason => $reason,
-                 author => $author,
                  disable => $matchfile->{disabled},
                  regex => $matchfile->{match}{distribution}
                };

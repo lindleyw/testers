@@ -221,9 +221,12 @@ package main::Command::update {
     sub run {
         my ($self, @args) = @_;
 
-        my $rrr = $self->app->smoker->get_recent(@args);
-        ; $DB::single = 1;
-        print "xxx";
+        my $updated_modules = $self->app->smoker->get_recent(@args);
+        if ($self->app->smoker->check_regex(module_id => $updated_modules)) {
+            print "modules updated OK";
+        } else {
+            print "could not update module list";
+        }
     }
 };
 
