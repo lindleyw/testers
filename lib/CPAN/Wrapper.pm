@@ -53,7 +53,7 @@ package CPAN::Wrapper {
         my $ua = Mojo::UserAgent->new();
         my $source_url = Mojo::URL->new($self->config->{metacpan}->{$type // 'module'}); # API endpoint
         push @{$source_url->path->parts}, $module_name;
-        my $result = eval { $ua->get($source_url); };
+        my $result = eval { $ua->max_redirects(5)->get($source_url); };
         if (defined $result && $result->res->{code} == 200) {
             my $module_fields = $result->res->json;
             return $module_fields;
@@ -77,12 +77,15 @@ package CPAN::Wrapper {
       return $source_url;
     }
 
-    sub recent_url {
-        my ($self) = @_;
+    my $default_list_url = {recent => '01modules.mtime.html',
+                            all    => '02packages.details.txt'};
+
+    sub module_list_url {
+        my ($self, $which_list) = @_;  # which_list should be 'recent' or 'all'
         my $source_url = Mojo::URL->new($self->config->{testers} );
         push @{$source_url->path->parts},
           'modules',
-          $self->config->{recent} // '01modules.mtime.html';
+          $self->config->{$which_list} // $default_list_url->{$which_list};
         return $source_url;
     }
 
@@ -119,6 +122,9 @@ package CPAN::Wrapper {
     }
 
     ################
+    ### NOTE: The below subroutine and its helper are a much
+    ### lighter-weight alternative to Parse::CPAN::Packages (which
+    ### needs Moose and a whole host of other things).
 
     sub _text_line_extract {
         my ($module_text) = @_;
@@ -133,7 +139,8 @@ package CPAN::Wrapper {
     sub _text_extract {
         my ($module_text_list) = @_;
       
-        # Extract from text file, skipping header, with header/body as SMTP message
+        # Extract from text file, skipping header, with header/body as SMTP message.
+
         my $header = 1;
         my $module_tgzs = Mojo::Collection->new (
                                               map {
@@ -159,16 +166,17 @@ package CPAN::Wrapper {
       # ; $DB::single = 1;
 
       # If no source specified, load default remote module list
-      my $source_url = Mojo::URL->new($source // $self->config->{cpan_testers});
+      my $source_url = Mojo::URL->new($source // $self->config->{testers});
       if ($source_url->protocol || $source_url->host) { # Looks like a remote file
           unless (length($source_url->path) > 1) { # no path, or '/'
               push @{$source_url->path->parts}, ( 'modules',
-                                                  $self->config->{cpan}->{modules} //
+                                                  $self->config->{all} //
                                                   '02packages.details.txt'
                                                 );
           }
           my $ua = Mojo::UserAgent->new();
-          $module_list = eval { $ua->get($source_url)->result; };
+          $module_list = eval { $ua->max_redirects(5)->get($source_url)->result; };
+          ; $DB::single = 1;
           if (defined $module_list) {
               if ($module_list->is_success) {
                   if ($source_url->path =~ /\.htm/) {
@@ -251,7 +259,7 @@ package CPAN::Wrapper {
                 # TODO: What to store for Author, Version?
             }
             $self->log->info("Reading Module regex from $source");
-            $disabled_list = Mojo::UserAgent->new()->get($source_url)->result;
+            $disabled_list = Mojo::UserAgent->new()->max_redirects(5)->get($source_url)->result;
             unless ($disabled_list->is_success) {
                 $self->log->warn("Can't download regex: ".$disabled_list->message);
                 return undef;

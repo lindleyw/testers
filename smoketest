@@ -145,25 +145,21 @@ package main::Command::list {
     }
 };
 
-package main::Command::reload {
-    # formerly 'update' command, this reloads the entire CPAN list.
-    use Mojo::Base 'Mojolicious::Command';
-
-    has 'description' => '';
-
-    sub run {
-        my ($self, @args) = @_;
-
-        return $self->app->smoker->update(@args);
-    }
-};
-
 ################################################################
 
 package main::Command::update_perl_versions {
     use Mojo::Base 'Mojolicious::Command';
 
     has 'description' => '';
+    has usage => sub { shift->extract_usage };
+
+=head1 SYNOPSIS
+
+Usage: APPLICATION update_perl_versions [options]
+
+Options:
+   -v ver something
+=cut
 
     sub run {
         my ($self, @args) = @_;
@@ -201,7 +197,16 @@ package main::Command::test_module {
 package main::Command::regex {
     use Mojo::Base 'Mojolicious::Command';
 
-    has 'description' => '';
+    has 'description' => 'Retrieves and updates, from metacpan, the cached copy of the regex for disabled modules';
+    has usage => sub { shift->extract_usage };
+
+=head1 SYNOPSIS
+
+Usage: APPLICATION regex [options]
+
+Options:
+   -s something
+=cut
 
     sub run {
         my ($self, @args) = @_;
@@ -223,23 +228,44 @@ package main::Command::update {
 
         my $updated_modules = $self->app->smoker->get_recent(@args);
         if ($self->app->smoker->check_regex(module_id => $updated_modules)) {
-            print "modules updated OK";
+            $self->app->log->info("modules updated OK");
         } else {
-            print "could not update module list";
+            $self->app->log->error("could not update module list");
         }
     }
 };
+
+################
+
+package main::Command::reload {
+    use Mojo::Base 'Mojolicious::Command';
+
+    has 'description' => 'Reloads the entire list of modules from MetaCPAN';
+
+    sub run {
+        my ($self, @args) = @_;
+        my $updated_modules = $self->app->smoker->get_all(@args);
+        if ($self->app->smoker->check_regex(module_id => $updated_modules)) {
+            $self->app->log->info("modules updated OK");
+        } else {
+            $self->app->log->error("could not update module list");
+        }
+    }
+};
+
 
 ################################################################
 
 package main::Command::module {
     use Mojo::Base 'Mojolicious::Command';
+    # use Mojo::Util qw(getopt);
 
     has 'description' => '';
 
     sub run {
         my ($self, @args) = @_;
-
+        # getopt \@args, 'charset=s' => \my $charset;
+        # say $charset;
         return $self->app->smoker->test_metacpan(@args);
     }
 };

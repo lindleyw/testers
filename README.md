@@ -22,14 +22,17 @@ REQUIREMENTS:
 This uses Mojo and Minion to divide the testing into steps, each of
 which is performed and controlled by the Minion job queue.
 
+    $ chmod a+x smoketest
+
 To begin, build a database and download the list of packages from
 CPAN:
 
-    $ perl smoketest update --rebuild
+    $ ./smoketest rebuild
+    $ ./smoketest update
 
 Example use from a locally saved copy of the package list:
 
-    $ perl smoketest update ~/Documents/02packages.details.txt --rebuild
+    $ perl smoketest update ~/Documents/02packages.details.txt
 
 to rebuild and reload database from a local file, or:
 
@@ -37,19 +40,28 @@ to rebuild and reload database from a local file, or:
 
 to update from the default CPAN location (remote URL)
 
-If you `chmod a+x smoketest` then continue by downloading the default
-Disabled list:
-
-    $ ./smoketest disable
-
+---
+(obsolete section)
 NOTE: The above step uses a YAML file which should contain (1) a regex
 that selects one or more modules by name; and (2) the setting
 disabled=1.  Alternately, if it says disabled=0 then the regex will
 *enable* the selected modules.
+---
 
 TODO: Also allow loading local files and setting priority, as:
 
     $ ./smoketest disable ~/mydisabled.yml --priority 10
+
+---
+
+TODO: Look for '!' in the build log files, and in the event of a
+failure, report the remainder of that line (may not be at the
+beginning of the line) as the 'actual' error. -- 2017-11-21
+
+... we know that, e.g., SOAP::Lite fails with an error. Try a few.
+
+
+---
 
 TODO: Pick a better verb instead of the possibly misleading 'disable'
 
