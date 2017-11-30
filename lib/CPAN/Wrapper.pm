@@ -228,8 +228,6 @@ package CPAN::Wrapper {
       my $module_list;
       my $module_dom;
 
-      # ; $DB::single = 1;
-
       # If no source specified, load default remote module list
       my $source_url = Mojo::URL->new($source // $self->config->{testers});
       if ($source_url->protocol || $source_url->host) { # Looks like a remote file
@@ -241,7 +239,6 @@ package CPAN::Wrapper {
           }
           my $ua = Mojo::UserAgent->new();
           $module_list = eval { $ua->max_redirects(5)->get($source_url)->result; };
-          ; $DB::single = 1;
           if (defined $module_list) {
               if ($module_list->is_success) {
                   if ($source_url->path =~ /\.htm/) {
@@ -269,7 +266,6 @@ package CPAN::Wrapper {
       }
 
       my $module_tgzs;
-      ; $DB::single = 1;
       if (defined $module_dom) {
         $module_tgzs = _dom_extract($module_dom->find('a[href$=".tar.gz"]'));
       } else {
@@ -401,8 +397,6 @@ package CPAN::Wrapper {
         ###
         my $source_url = $use_latest ? $self->disabled_regex_url : Mojo::URL->new($source);
         my ($disabled_list, $priority, $author, $reason);
-
-        # ; $DB::single = 1;
 
         if ($source_url->protocol || $source_url->host) { # looks like a URL
             if ($use_latest) {

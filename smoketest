@@ -119,8 +119,6 @@ package main::Command::list {
     sub run {
         my ($self, @args) = @_;
 
-        # ; $DB::single = 1;
-
         my $jobs = $self->app->smoker->minion->backend->list_jobs(0, 50,  # offset, limit
                                                           {state => $args[0] // 'inactive',    # 'finished' or 'failed' are useful
                                                            task => 'test',
@@ -289,14 +287,14 @@ package main::Command::dist {
                                               end_date => $end_date,
                                             } );
 
-        use Data::Dumper;
-        print STDERR Dumper($releases);
+        # use Data::Dumper;
+        # print STDERR Dumper($releases);
 
-        # Enqueue tests for each of those dists.
-        # NOTE: Each test should check the disabled status before proceeding.
+        # Enqueue tests for each of those releases.
         if (defined $releases) {
           $releases->each(sub {
                             my $id = $_->{id};
+                            # TODO:
                             # Get distribution name
                             # unless $force_test --
                             #  - Check against disabled list
@@ -504,7 +502,6 @@ get '/tests/:modname' => sub {
 app->minion->add_task ( update => sub { my ($job, @args) = @_;
                                                 my $results = $job->app->smoker->get_recent(@args);
                                                 if (defined $results) {
-                                                    # ; $DB::single = 1;
                                                     # TODO: possibly:
                                                     # $job->app->minion->enqueue('check_regex', ... ?
                                                     $job->finished();
@@ -516,7 +513,6 @@ app->minion->add_task ( update => sub { my ($job, @args) = @_;
 
 get '/update' => sub {
     my ($self) = @_;
-    # ; $DB::single = 1;
     my $id = $self->minion->enqueue('update', {priority => 0});
     $self->render(json => {job => {task => 'update', id => $id}});
 };

@@ -506,8 +506,6 @@ package Tester::Smoker {
         #     $hits = $module_list->{hits}->{hits};
         # }
 
-        # ; $DB::single = 1;
-
         # foreach my $module (@{$hits}) {
         #     my $id = eval {
         #         $self->sql->db->query('INSERT INTO modules(name, version, released, author, relative_url) '.
