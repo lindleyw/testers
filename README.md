@@ -12,6 +12,25 @@ results:
 
 http://blogs.perl.org/users/preaction/2017/07/cpan-testers-has-an-api.html
 
+BACKGROUND:
+
+First, definitions. From the glossary of CPAN terminology, in brief we have:
+
+  * A package is a namespace for Perl code, introduced with the
+    package built-in.
+
+  * A module is a file with a .pm extension that contains either a
+    collection of functions, or a Perl class. Typically a module
+    contains a package of the corresponding name.
+
+  * A distribution is a collection of one or more modules and
+    associated files that are released together.
+  
+  * A release is one instance of a distribution, with a given version
+    number, that was released to PAUSE.
+
+Source: http://neilb.org/2015/09/05/cpan-glossary.html
+
 REQUIREMENTS:
 
    $ cpanm Mojolicious Mojo::SQLite Minion Minion::Backend::SQLite\

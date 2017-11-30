@@ -30,6 +30,71 @@ package CPAN::Wrapper {
         return $CPAN::VERSION;
     }
 
+    use CPAN::Reporter::History;
+    # NOTE: have_tested() returns a list of hashes, e.g.,
+    # 0  HASH(0x4070958)
+    #    'archname' => 'x86_64-linux'
+    #    'dist' => 'Acme-CPAN-Testers-FAIL-0.02'
+    #    'grade' => 'FAIL'
+    #    'osvers' => '4.4.0-63-generic'
+    #    'perl' => '5.26.0'
+    #    'phase' => 'test'
+    # You can optionally pass one or more key/value pairs to match against.
+
+    if (0) {
+    # # TODO:
+    # # Consider this code from App::cpanminus::reporter --
+    #   my $cpanm_version = $self->{_cpanminus_version} || 'unknown cpanm version';
+    #   my $meta = $self->get_meta_for( $dist );
+    #   my $client = CPAN::Testers::Common::Client->new(
+    #                                                   author      => $self->author,
+    #                                                   distname    => $dist,
+    #                                                   grade       => $result,
+    #                                                   via         => "App::cpanminus::reporter $VERSION ($cpanm_version)",
+    #                                                   test_output => join( '', @test_output ),
+    #                                                   prereqs     => ($meta && ref $meta) ? $meta->{prereqs} : undef,
+    #                                                  );
+
+    #   if (!$self->skip_history && $client->is_duplicate) {
+    #     print "($resource, $author, $dist, $result) was already sent. Skipping...\n"
+    #       if $self->verbose;
+    #     return;
+    #   } else {
+    #     print "sending: ($resource, $author, $dist, $result)\n" unless $self->quiet;
+    #   }
+
+    #   my $reporter = Test::Reporter->new(
+    #                                      transport      => $self->config->transport_name,
+    #                                      transport_args => $self->config->transport_args,
+    #                                      grade          => $client->grade,
+    #                                      distribution   => $dist,
+    #                                      distfile       => $self->distfile,
+    #                                      from           => $self->config->email_from,
+    #                                      comments       => $client->email,
+    #                                      via            => $client->via,
+    #                                     );
+      # if ($self->dry_run) {
+      #   print "not sending (drun run)\n" unless $self->quiet;
+      #   return;
+      # }
+
+      # try {
+      #   $reporter->send() || die $reporter->errstr();
+      # }
+      #   catch {
+      #     print "Error while sending this report, continuing with the next one...\n" unless $self->quiet;
+      #     print "DEBUG: @_" if $self->verbose;
+      #   } finally{
+      #     $client->record_history unless $self->skip_history;
+      #   };
+
+    }
+
+
+
+
+
+    ################################################################
     #
     # To explore the MetaCPAN API, see: https://explorer.metacpan.org/
     #
@@ -130,8 +195,8 @@ package CPAN::Wrapper {
         my ($module_text) = @_;
         
         my $vals = {};          # populate with a hash slice:
-        @{$vals}{qw(name version relative_url)} = split /\s+/, $module_text;
-        $vals->{author} = ($vals->{relative_url} =~ m{^./../(\w+)/})[0];
+        @{$vals}{qw(name version download_url)} = split /\s+/, $module_text;
+        $vals->{author} = ($vals->{download_url} =~ m{^./../(\w+)/})[0];
         $vals->{version} = undef if ($vals->{version} eq 'undef'); # Replace text 'undef'
         return $vals;
     }
@@ -184,6 +249,7 @@ package CPAN::Wrapper {
                   } else {
                       $module_list = $module_list->body; # plaintext contents
                   }
+                  $self->log->info("Fetched remote module list.");
               } else {
                   $self->log->error("Can't download modules list: ".$module_list->message);
                   return undef;
@@ -203,6 +269,7 @@ package CPAN::Wrapper {
       }
 
       my $module_tgzs;
+      ; $DB::single = 1;
       if (defined $module_dom) {
         $module_tgzs = _dom_extract($module_dom->find('a[href$=".tar.gz"]'));
       } else {
@@ -212,6 +279,108 @@ package CPAN::Wrapper {
       return $module_tgzs;
     }
     
+    ################
+    ###
+    ### TODO: Move _item_list, _date_range, _versions and test_metacpan into here
+    ### and make the return value parallel to _{text|dom}_extract().  Then we can
+    ### call get_metacpan() for the metacpan API equivalently to get_modules().
+    ###
+
+    ################
+    
+    sub _item_list {
+        # Returns empty list (which gets skipped in building list later) if no author, -or-
+        # {'term' => {'author' => 'JBERGER'}},  # single author passed
+        # {'or' => [{'term' => {'author' => 'PREACTION'}},
+        #           {'term' => {'author' => 'JBERGER'}}]}  # 'PREACTION,JBERGER' passed-in
+        #
+        my $option = shift;
+        my @item_list;
+        while (defined (my $item = shift)) {
+            if (ref $item) {
+                push @item_list, map { split /,/ } @{$item};
+                next;
+            }
+            push @item_list, split (',', $item) if defined $item;
+        }
+        # XXX: Probably eliminate the special-case of ref and move that logic into _versions() below
+        if (ref $option) { # Listref: [term, value to return if item is empty]
+            if (!scalar @item_list) {
+                return ${$option}[1];
+            }
+            $option = ${$option}[0];
+        }
+        return () unless scalar @item_list;
+        return { term => { $option => $item_list[0] }} if (scalar @item_list == 1);
+        return { or => [ map { { term => { $option => $_ }} } @item_list ] };
+    }
+
+    sub _date_range {
+        my ($start, $end) = @_;
+        if (defined $start && defined $end) {
+            return ( range => { date => { gte => $start, lte => $end } } );
+        }
+        return ('match_all' => {});   # populate 'query' with this
+    }
+
+    ### TODO: 
+    ### Are we parsing the returned value equivalently to get_modules() --?
+
+    sub get_metacpan {
+        my ($self, $args) = @_;   # Optionally specify one or more modules by name
+        # See also: https://github.com/metacpan/metacpan-api/blob/master/docs/API-docs.md
+
+        my $ua = Mojo::UserAgent->new();
+        my $source_url;
+        my $hits=[];
+
+
+        $source_url = $self->config->{metacpan}->{release}; # API endpoint;
+        # NOTE: For a Release,
+        # 'main_module' (e.g., 'Mojolicious') is the name of a Distribution
+        # 'name'  (e.g., 'Mojolicious-7.46') is the full release name+version.
+        my $req = { 'size' => $args->{count} // 10,
+                    'fields' => [qw(name version date author download_url main_module)],  # could add:  provides
+                    'filter' => {'and' => [_item_list('main_module', $args->{dist}), # e.g., 'Mojolicious'
+                                           _item_list('name', $args->{release}),     # e.g., 'Mojolicious-7.46'
+                                           _item_list('author', $args->{author}),
+                                           _item_list(['version', {term => {'status' => 'latest'}}], $args->{version}),
+                                          ]},
+                    'query' => { # optional range, otherwise 'all'
+                                _date_range( $args->{start_date}, $args->{end_date} ) },
+                    'sort' => {'date' => 'desc'},
+                  };
+        # NOTE: Above could request $module->{fields}->{provides}
+        # which would contain a list of provided (sub)modules
+
+        print STDERR Mojo::JSON::encode_json($req);
+        my $modules = $ua->post($source_url => json => $req)->result;
+        my $module_list = defined ($modules) ? Mojo::JSON::decode_json($modules->body) : {};
+
+        # NOTE: $module_list is now a list of hashes, as:
+        # $VAR1 = \[
+        #     {
+        #       'sort' => [
+        #                   '1510839207000'
+        #                 ],
+        #       '_type' => 'release',
+        #       '_score' => undef,
+        #       '_id' => 'cjj8Kp6m1KlG0CnLmtVVxWSVfFU',
+        #       '_index' => 'cpan_v1_01',
+        #       'fields' => {
+        #                     'version' => '7.56',
+        #                     'date' => '2017-11-16T13:33:27',
+        #                     'author' => 'SRI',
+        #                     'download_url' => 'https://cpan.metacpan.org/authors/id/S/SR/SRI/Mojolicious-7.56.tar.gz',
+        #                     'main_module' => 'Mojolicious',
+        #                     'name' => 'Mojolicious-7.56'
+        #                   }
+        #     }
+        #   ];
+        # and we want a list of just the fields hashes.
+        return map { $_->{fields} } @{$module_list->{hits}->{hits}};
+    }
+
     ################################################################
 
     use YAML;

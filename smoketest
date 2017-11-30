@@ -30,10 +30,10 @@ use Tester::Smoker;
 
 ################################################################
 
-# Find CPAN in the list of modules (it's currently under ANDK's directory)
-# Get the current revision's list of disabled modules and use that to refresh the disabled list
+# Find CPAN in the list of distributions (it's currently under ANDK's directory)
+# Get the current revision's list of disabled dists and use that to refresh the disabled list
 
-# When relative_url is 'A/AN/ANDK/CPAN-2.16.tar.gz' name is CPAN, version is 2.16 --
+# When download_url is 'A/AN/ANDK/CPAN-2.16.tar.gz' name is CPAN, version is 2.16 --
 # Fetch https://st.aticpan.org/source/ANDK/CPAN-2.16/distroprefs/01.DISABLED.yml
 
 sub _pick {
@@ -44,23 +44,23 @@ sub _pick {
 }
 
 sub _add_test {
-    # Run a test on a given module, with a given module version,
-    # on a given version of Perl
+    # Run a test on a given release (module+version), on a given
+    # version of Perl
     my ($self, $mod_info) = @_;
     
-    my $module_id = $mod_info->{module_id} // eval {
-         # Because of the index `module_idx`, choosing the most-recent
-         # module by name will always give us the latest version
-         $self->app->db->select( -from => 'modules',
+    my $release_id = $mod_info->{dist_id} // eval {
+         # Because of the index `dist_idx`, choosing the most-recent
+         # distribution by name will always give us the latest version
+         $self->app->db->select( -from => 'releases',
                                  -columns => ['id'],
                                  -where => { _pick ( $mod_info,
                                                      qw(name version) ) },
                                  -order_by => ['-added'],
                                  -limit => 1 )->hash->{id};
     };
-    $self->smoker->minion->enqueue('test', { module_id => $module_id,
-                                          env_id => $mod_info->{environment_id}
-                                        });
+    $self->smoker->minion->enqueue('test', { dist_id => $release_id,
+                                             env_id => $mod_info->{environment_id}
+                                           });
 }
 
 sub _find_recent {
@@ -70,8 +70,8 @@ sub _find_recent {
     #   _find_recent($self,{author =>'ANDK', name => {'LIKE', 'CPAN%'}})
     #   _find_recent($self,{added => {'>',\["datetime('now', ?)", '-21 day']}})
 
-    my $modules =
-         $self->app->db->select( -from => 'modules',
+    my $releases =
+         $self->app->db->select( -from => 'releases',
                                  # grouping by name after selecting max(added)
                                  # guarantees we get the most-recently-added version
                                  # for each module name
@@ -84,7 +84,7 @@ sub _find_recent {
                                  -order_by => ['-added'],  # most-recent first
                                  (defined $limit) ? (-limit => $limit) : (),
                                );
-    return $modules->hashes;      # as a Mojo::Collection
+    return $releases->hashes;      # as a Mojo::Collection
 }
 
 sub _find_recent_days {
@@ -119,22 +119,22 @@ package main::Command::list {
     sub run {
         my ($self, @args) = @_;
 
-        ; $DB::single = 1;
+        # ; $DB::single = 1;
 
         my $jobs = $self->app->smoker->minion->backend->list_jobs(0, 50,  # offset, limit
                                                           {state => $args[0] // 'inactive',    # 'finished' or 'failed' are useful
                                                            task => 'test',
                                                           }
                                                          );
-        print Mojo::Util::tablify [ [qw/Job Status Module Version Author/],
+        print Mojo::Util::tablify [ [qw/Job Status Distribution Version Author/],
                                     map {
-                                        if ( $_->{args}[0] eq 'module_id' ) {
-                                            my $module_id = $_->{args}[1];
-                                            if (!defined $module_id) {
+                                        if ( $_->{args}[0] eq 'dist_id' ) {
+                                            my $release_id = $_->{args}[1];
+                                            if (!defined $release_id) {
                                                 ()
                                             } else {
                                                 [ $_->{id}, $_->{state},
-                                                  $self->module_info($module_id)->@{qw/name version author/}]
+                                                  $self->module_info($release_id)->@{qw/name version author/}]
                                             }
                                         } else {
                                             ()
@@ -226,8 +226,8 @@ package main::Command::update {
     sub run {
         my ($self, @args) = @_;
 
-        my $updated_modules = $self->app->smoker->get_recent(@args);
-        if ($self->app->smoker->check_regex(module_id => $updated_modules)) {
+        my $updated_releases = $self->app->smoker->get_recent(@args);
+        if ($self->app->smoker->check_regex(release_id => $updated_releases)) {
             $self->app->log->info("modules updated OK");
         } else {
             $self->app->log->error("could not update module list");
@@ -244,8 +244,8 @@ package main::Command::reload {
 
     sub run {
         my ($self, @args) = @_;
-        my $updated_modules = $self->app->smoker->get_all(@args);
-        if ($self->app->smoker->check_regex(module_id => $updated_modules)) {
+        my $updated_releases = $self->app->smoker->get_all(@args);
+        if ($self->app->smoker->check_regex(release_id => $updated_releases)) {
             $self->app->log->info("modules updated OK");
         } else {
             $self->app->log->error("could not update module list");
@@ -256,17 +256,63 @@ package main::Command::reload {
 
 ################################################################
 
-package main::Command::module {
+package main::Command::dist {
     use Mojo::Base 'Mojolicious::Command';
-    # use Mojo::Util qw(getopt);
+    use Mojo::Util qw(getopt);
 
     has 'description' => '';
 
     sub run {
         my ($self, @args) = @_;
-        # getopt \@args, 'charset=s' => \my $charset;
-        # say $charset;
-        return $self->app->smoker->test_metacpan(@args);
+        getopt \@args, [qw(auto_abbrev)],
+          'count=i' => \my $count,
+          'force'   => \my $force_test,
+          'distribution|distro=s' => \my @dists,
+          'version=s' => \my @versions,  # one 'Release' is a 'Distribution-Version' combination,
+          'release=s' => \my @releases,  # so generally either specify release or distro(+version).
+          'author=s' => \my @authors,
+          'perl_version=s' => \my @perl_versions,
+          'start_date=s' => \my $start_date,
+          'end_date=s'   => \my $end_date;
+
+        # Split/join to also permit comma-delimited
+        @perl_versions = split ',', join ',', @perl_versions;
+        my $releases =
+          $self->app->smoker->get_metacpan( { count => $count,
+                                              force_test => $force_test,
+                                              main_module => [split ',', join ',', @dists],
+                                              name => [split ',', join ',', @releases],
+                                              version => [split ',', join ',', @versions],
+                                              author => [split ',', join ',', @authors],
+                                              perl_version => [@perl_versions],
+                                              start_date => $start_date,
+                                              end_date => $end_date,
+                                            } );
+
+        use Data::Dumper;
+        print STDERR Dumper($releases);
+
+        # Enqueue tests for each of those dists.
+        # NOTE: Each test should check the disabled status before proceeding.
+        if (defined $releases) {
+          $releases->each(sub {
+                            my $id = $_->{id};
+                            # Get distribution name
+                            # unless $force_test --
+                            #  - Check against disabled list
+                            #  - Check against cpan/cpanm already-tested list
+                            #  - Check against *our* already-tested database
+                            # Enqueue Minion testing jobs
+                            if (scalar @perl_versions) {
+                              foreach my $v (@perl_versions) {
+                                $self->app->minion->enqueue(test => [release_id => $id, perl_version => $v]);
+                              }
+                            } else {
+                              $self->app->minion->enqueue(test => [release_id => $id]);
+                            }
+                          });
+        }
+
     }
 };
 
@@ -347,38 +393,35 @@ push @{app->commands->namespaces}, 'main::Command';
 
 plugin 'Config';
 
-
-# plugin 'Minion' => { SQLite => 'sqlite:'. app->config->{dbname} };
-
 helper smoker => sub {
     my ($self) = @_;
 
-    getopt
-    'a|author=s'  => \my @authors,
-    'module=s'    => \my @modules,
-    'r|recent=i'  => \my $freshness,  # in days
-    'rev|revision|version=s' => \my @versions,  # probably should change meaning of 'count'
-    'perl=s'      => \my @perl_versions,  # probably should change meaning of 'count'
-    'c|count=i'   => \my $count,
-    'start|start_date=s', \my $start_date,
-    'end|end_date=s', \my $end_date,
-    'f|force'     => \my $force_test,
-    'v|verbose'   => \my $verbose,
-    ;
+    # getopt
+    # 'a|author=s'  => \my @authors,
+    # 'module=s'    => \my @modules,
+    # 'r|recent=i'  => \my $freshness,  # in days
+    # 'rev|revision|version=s' => \my @versions,  # probably should change meaning of 'count'
+    # 'perl=s'      => \my @perl_versions,  # probably should change meaning of 'count'
+    # 'c|count=i'   => \my $count,
+    # 'start|start_date=s', \my $start_date,
+    # 'end|end_date=s', \my $end_date,
+    # 'f|force'     => \my $force_test,
+    # 'v|verbose'   => \my $verbose,
+    # ;
 
     state $smoker = Tester::Smoker->new(database => $self->config->{dbname},
                                         config   => $self->config,
                                         log      => $self->app->log,
-                                        authors  => \@authors,
-                                        modules  => \@modules,
-                                        versions => \@versions,
-                                        perl_versions => \@perl_versions,
-                                        recent   => $freshness,
-                                        start_date => $start_date,
-                                        end_date => $end_date,
-                                        count    => $count,
-                                        force_test => $force_test,
-                                        verbose  => $verbose,
+                                        # authors  => \@authors,
+                                        # modules  => \@modules,
+                                        # versions => \@versions,
+                                        # perl_versions => \@perl_versions,
+                                        # recent   => $freshness,
+                                        # start_date => $start_date,
+                                        # end_date => $end_date,
+                                        # count    => $count,
+                                        # force_test => $force_test,
+                                        # verbose  => $verbose,
                                         app => $self->app,
                                        );
     
@@ -414,7 +457,7 @@ app->minion->add_task( test => sub { my ($job, @args) = @_;
 get '/modules' => sub {
     my $self = shift;
 
-    my $result = eval { $self->db->query('SELECT COUNT(*) AS count FROM modules')->hashes->first; };
+    my $result = eval { $self->db->query('SELECT COUNT(*) AS count FROM releases')->hashes->first; };
     if (defined $result) {
         $self->render(json => $result);
     } else {
@@ -425,7 +468,8 @@ get '/modules' => sub {
 get '/module/:modname' => sub {
     my $self = shift;
 
-    my $result = eval { $self->db->query('SELECT * FROM modules WHERE name=?', $self->stash('modname'))->hashes->first; };
+    my $result = eval { $self->db->query('SELECT * FROM releasess WHERE name=?',
+                                         $self->stash('modname'))->hashes->first; };
     if (defined $result) {
         $self->render(json => $result);
     } else {
@@ -436,7 +480,7 @@ get '/module/:modname' => sub {
 get '/tests/:modname' => sub {
     my $self = shift;
 
-    my $result = eval { $self->db->query('SELECT * FROM tests WHERE module_id=(SELECT id FROM modules WHERE name=?)',
+    my $result = eval { $self->db->query('SELECT * FROM tests WHERE dist_id=(SELECT id FROM releases WHERE name=?)',
                                          $self->stash('modname'))->hashes; };
     if (defined $result) {
         $self->render(json => $result);
@@ -460,7 +504,7 @@ get '/tests/:modname' => sub {
 app->minion->add_task ( update => sub { my ($job, @args) = @_;
                                                 my $results = $job->app->smoker->get_recent(@args);
                                                 if (defined $results) {
-                                                    ; $DB::single = 1;
+                                                    # ; $DB::single = 1;
                                                     # TODO: possibly:
                                                     # $job->app->minion->enqueue('check_regex', ... ?
                                                     $job->finished();
@@ -472,7 +516,7 @@ app->minion->add_task ( update => sub { my ($job, @args) = @_;
 
 get '/update' => sub {
     my ($self) = @_;
-    ; $DB::single = 1;
+    # ; $DB::single = 1;
     my $id = $self->minion->enqueue('update', {priority => 0});
     $self->render(json => {job => {task => 'update', id => $id}});
 };

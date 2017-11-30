@@ -184,7 +184,7 @@ package Tester::Smoker {
         return undef unless defined $regex_list;
 
         my $module_info = eval {
-            $self->sql->db->select(-from => 'modules',
+            $self->sql->db->select(-from => 'releases',
                                    -where => {id => {-in => $module_id}},
                                    # ok for scalar or arrayref
                                   )->hashes;
@@ -205,7 +205,7 @@ package Tester::Smoker {
                                                       }
                                                   });
                                 # Save final enabled/disabled status
-                                eval { $self->sql->db->update(-name => 'modules',
+                                eval { $self->sql->db->update(-name => 'releases',
                                                               -set => { disabled_by => $disabled_by },
                                                               -where => { id => $module_info->{id} });
                                        $self->log->info("Module $_->{name} disabled by regex");
@@ -232,7 +232,7 @@ package Tester::Smoker {
         # Retrieves the latest information for a module
         my ($self, $module) = @_;
         my $results = eval {
-            $self->sql->db->query('SELECT * FROM modules WHERE name=? ORDER BY released DESC LIMIT 1;', $module)->hashes;
+            $self->sql->db->query('SELECT * FROM releases WHERE name=? ORDER BY released DESC LIMIT 1;', $module)->hashes;
         };
         return $results;
     }
@@ -247,7 +247,7 @@ package Tester::Smoker {
         my $module_name = eval { $fields->{module}->[0]->{name}; } // $fields->{main_module};
         return undef unless defined $module_name;
         my $id = eval {
-                $self->sql->db->query('INSERT INTO modules(name, version, released, author, relative_url) '.
+                $self->sql->db->query('INSERT INTO modules(name, version, released, author, download_url) '.
                                       'VALUES (?,?,?,?,?)',
                                       $module_name,
                                       @{$fields}{qw(version date author download_url)})
@@ -268,34 +268,37 @@ package Tester::Smoker {
         return $module_fields;
     }
 
-    ################
+    ################################################################
+
+    sub save_releases {
+        my ($self, $releases) = @_;
+
+        if (defined $releases) {
+            $releases->each(sub {
+                                $_->{id} = eval {$self->sql->db->insert(-into => 'releases',
+                                                                        -values => {%$_{qw(name version
+                                                                                           released author
+                                                                                           download_url)}},
+                                                                       )->last_insert_id;
+                                             };
+                                if (!defined $_->{id}) {  # Probably already existed
+                                    $_->{id} = eval { my $g = $self->sql->db->select(-from => 'releases',
+                                                                                     -where => {%$_{qw(name version)}});
+                                                      $g->hashes->first->{id};
+                                                  };
+                                }
+                            });
+            $self->log->info("got updated release list");
+        }
+        return $releases;
+    }
 
     sub update {
         my ($self, $source) = @_;
 
-        # Get a list of modules from the source
-        my $module_tgzs = $self->cpan->get_modules($source);
-        if (defined $module_tgzs) {
-            $module_tgzs->each(sub {
-                                   $_->{id} = eval {$self->sql->db->insert(-into => 'modules',
-                                                                           -values => {%$_{qw(name version
-                                                                                              released author
-                                                                                              relative_url)}},
-                                                                          )->last_insert_id;
-                                                };
-                                   if (!defined $_->{id}) {  # Probably already existed
-                                       $_->{id} = eval { my $g = $self->sql->db->select(-from => 'modules',
-                                                                                        -where => {%$_{qw(name version)}});
-                                                         $g->hashes->first->{id};
-                                                     };
-                                   }
-                               });
-            $self->log->info("got updated module list");
-        }
-        return $module_tgzs;
+        # Get a list of releases from the source URL
+        return save_releases($self->cpan->get_modules($source));
     }
-
-    ################################################################
 
     sub get_recent {
         # Get the list of most recently updated modules from source; default to
@@ -305,13 +308,16 @@ package Tester::Smoker {
         return $self->update($self->cpan->module_list_url('recent', $source));
     }
 
-    ####
-
     sub get_all {
         # Get the list of all modules from source
         # NOTE: the caller will probably create a Minion job to test each
         my ($self, $source) = @_;
         return $self->update($self->cpan->module_list_url('all', $source));
+    }
+
+    sub get_metacpan {
+        my ($self, $args) = @_;
+        return $self->save_releases(Mojo::Collection->new($self->cpan->get_metacpan($args)));
     }
 
     ################################################################
@@ -333,7 +339,7 @@ package Tester::Smoker {
             return 0;
         }
 
-        my $module_info = $self->sql->db->query('SELECT name, version, author, relative_url FROM modules WHERE modules.id=?',
+        my $module_info = $self->sql->db->query('SELECT name, version, author, download_url FROM releases WHERE modules.id=?',
                                             $module_id)->hashes;
         return 0 unless defined $module_info;
         $module_info = $module_info->first;
@@ -345,7 +351,7 @@ package Tester::Smoker {
             return 0;
         }
 
-        $module_info->{relative_url} =~ m{/([^/]+?)\z};
+        $module_info->{download_url} =~ m{/([^/]+?)\z};
 
         my $module_specific = $1;
         return 0 unless defined $module_specific;
@@ -361,8 +367,7 @@ package Tester::Smoker {
         local $ENV{AUTOMATED_TESTING}      = 1;
 
         # Test the specific version we asked for
-        # 'relative_url' will actually be full URI at this point
-        my $tested_module = Mojo::URL->new($module_info->{relative_url});
+        my $tested_module = Mojo::URL->new($module_info->{download_url});
         my $command;
 
         my ($build_log, $build_error_log);
@@ -395,7 +400,7 @@ package Tester::Smoker {
           return 0;
         }
 
-        my $result = TestModule::test_module( module => $module_info->{relative_url},
+        my $result = TestModule::test_module( module => $module_info->{download_url},
                                               perl_release => $perlbuild );
         # Save with a hash slice
         # NB: build_error_log is actually the result log
@@ -459,132 +464,76 @@ package Tester::Smoker {
     }
 
 
-    ################
-    
-    sub _item_list {
-        # Returns empty list (which gets skipped in building list later) if no author, -or-
-        # {'term' => {'author' => 'JBERGER'}},  # single author passed
-        # {'or' => [{'term' => {'author' => 'PREACTION'}},
-        #           {'term' => {'author' => 'JBERGER'}}]}  # 'PREACTION,JBERGER' passed-in
-        #
-        my $option = shift;
-        my @item_list;
-        while (defined (my $item = shift)) {
-            if (ref $item) {
-                push @item_list, map { split /,/ } @{$item};
-                next;
-            }
-            push @item_list, split (',', $item) if defined $item;
-        }
-        # XXX: Probably eliminate the special-case of ref and move that logic into _versions() below
-        if (ref $option) { # Listref: [term, value to return if item is empty]
-            if (!scalar @item_list) {
-                return ${$option}[1];
-            }
-            $option = ${$option}[0];
-        }
-        return () unless scalar @item_list;
-        return { term => { $option => $item_list[0] }} if (scalar @item_list == 1);
-        return { term => { or => [ map { { term => { $option => $_ }} } @item_list ] } };
-    }
-
-    sub _date_range {
-        my ($start, $end) = @_;
-        if (defined $start && defined $end) {
-            return ( range => { date => { gte => $start, lte => $end } } );
-        }
-        return ('match_all' => {});   # populate 'query' with this
-    }
-
-    sub _versions {
-        my ($versions, $modules, $count) = @_;
-        # TODO:
-        # Return appropriate for these use cases
-        # - get the one latest version (status=latest) of each of several modules
-        # - get last 'n' versions of one module (use 'count')
-        # - get specific versions of one module
-        # ... _item_list(['version', {term => {'status' => 'latest'}}], $self->{versions}) ...
-
-        # XXX: this won't work, because _item_list does more than just separate out comma-delimited lists
-        my @selected_versions = _item_list($versions);
-        return @selected_versions if scalar @selected_versions;
-        # ...
-    }
-
     sub test_metacpan {
-        my ($self, @modules) = @_;   # Optionally specify one or more modules by name
-        # See also: https://github.com/metacpan/metacpan-api/blob/master/docs/API-docs.md
+        my ($self, @args) = @_;
 
-        # TODO: Modify query below for named modules vs. whatever's-latest
-        # https://fastapi.metacpan.org/v1/download_url/HTTP::Tiny
-        # returns {status, version, date, download_url}
+        use Data::Dumper;
+        print Dumper(\@args);
+        # # TODO: Modify query below for named modules vs. whatever's-latest
+        # # https://fastapi.metacpan.org/v1/download_url/HTTP::Tiny
+        # # returns {status, version, date, download_url}
 
-        my $ua = Mojo::UserAgent->new();
-        my $source_url;
-        my $hits=[];
+        # my $ua = Mojo::UserAgent->new();
+        # my $source_url;
+        # my $hits=[];
 
-        if (scalar @modules) {
-            # Explicitly requesting modules, always forces their test.
-            $self->{force_test} = 1;
-            $source_url = $self->config->{metacpan}->{module};
-            foreach my $module (@modules) {
-                my $req_url = Mojo::URL->new($source_url);
-                $req_url->path($req_url->path->trailing_slash(1)->merge($module));
-                my $modules = $ua->get($req_url)->result;
-                push @{$hits}, { fields => { %{$modules->json}, main_module => $module } } if defined ($modules);
-            }
-        } else {
-            $source_url = $self->config->{metacpan}->{release}; # API endpoint;
-            my $req = { 'size' => $self->{count} // 10,
-                        'fields' => [qw(name version date author download_url main_module)],  # could add:  provides
-                        'filter' => {'and' => [_item_list('main_module', $self->{modules}),
-                                               _item_list('author', $self->{authors}),
-                                               # TODO: Change this to _versions() above???
-                                               _item_list(['version', {term => {'status' => 'latest'}}], $self->{versions}),
-                                              ]},
-                        'query' => { # optional range, otherwise 'all'
-                                    _date_range( $self->{start_date}, $self->{end_date} ) },
-                        'sort' => {'date' => 'desc'},
-                      };
-            # NOTE: $module->{fields}->{provides} if used, would contain a list of provided (sub)modules
-            my $modules = $ua->post($source_url => json => $req)->result;
-            my $module_list = defined ($modules) ? Mojo::JSON::decode_json($modules->body) : {};
-            $hits = $module_list->{hits}->{hits};
-        }
+        # if (scalar @modules) {
+        #     # Explicitly requesting modules, always forces their test.
+        #     $self->{force_test} = 1;
+        #     $source_url = $self->config->{metacpan}->{module};
+        #     foreach my $module (@modules) {
+        #         my $req_url = Mojo::URL->new($source_url);
+        #         $req_url->path($req_url->path->trailing_slash(1)->merge($module));
+        #         my $modules = $ua->get($req_url)->result;
+        #         push @{$hits}, { fields => { %{$modules->json}, main_module => $module } } if defined ($modules);
+        #     }
+        # } else {
+        #     $source_url = $self->config->{metacpan}->{release}; # API endpoint;
+        #     my $req = { 'size' => $self->{count} // 10,
+        #                 'fields' => [qw(name version date author download_url main_module)],  # could add:  provides
+        #                 'filter' => {'and' => [_item_list('main_module', $self->{modules}),
+        #                                        _item_list('author', $self->{authors}),
+        #                                        # TODO: Change this to _versions() above???
+        #                                        _item_list(['version', {term => {'status' => 'latest'}}], $self->{versions}),
+        #                                       ]},
+        #                 'query' => { # optional range, otherwise 'all'
+        #                             _date_range( $self->{start_date}, $self->{end_date} ) },
+        #                 'sort' => {'date' => 'desc'},
+        #               };
+        #     # NOTE: $module->{fields}->{provides} if used, would contain a list of provided (sub)modules
+        #     my $modules = $ua->post($source_url => json => $req)->result;
+        #     my $module_list = defined ($modules) ? Mojo::JSON::decode_json($modules->body) : {};
+        #     $hits = $module_list->{hits}->{hits};
+        # }
 
-        ; $DB::single = 1;
+        # ; $DB::single = 1;
 
-        foreach my $module (@{$hits}) {
-            my $id = eval {
-                $self->sql->db->query('INSERT INTO modules(name, version, released, author, relative_url) '.
-                                      'VALUES (?,?,?,?,?)',
-                                      $module->{fields}->{main_module},
-                                      @{$module->{fields}}{qw(version date author download_url)})
-                ->last_insert_id;
-            };
-            $self->log->info('Adding ' . $module->{fields}->{main_module} . " = $id")
-            if (defined $id && $self->{verbose});
-            # For now, save full URL instead of relative.  Could do something like:
-            # my $relative_url = Mojo::URL->new($module->{fields}->{download_url})->path;
+        # foreach my $module (@{$hits}) {
+        #     my $id = eval {
+        #         $self->sql->db->query('INSERT INTO modules(name, version, released, author, relative_url) '.
+        #                               'VALUES (?,?,?,?,?)',
+        #                               $module->{fields}->{main_module},
+        #                               @{$module->{fields}}{qw(version date author download_url)})
+        #         ->last_insert_id;
+        #     };
+        #     $self->log->info('Adding ' . $module->{fields}->{main_module} . " = $id")
+        #     if (defined $id && $self->{verbose});
+        #     # For now, save full URL instead of relative.  Could do something like:
+        #     # my $relative_url = Mojo::URL->new($module->{fields}->{download_url})->path;
 
-            # Newly-seen modules are always tested. Can also force testing of old ones.
-            if (!defined $id && $self->{force_test}) {
-                $id = eval {
-                    $self->sql->db->query('SELECT id FROM modules WHERE name=? AND version=?',
-                                          $module->{fields}->{main_module},
-                                          $module->{fields}->{version}
-                                         )->hash->{id};
-                };
-                $self->log->info('Queue test for ' . $module->{fields}->{main_module} .' v' . $module->{fields}->{version}
-                . " = $id (--force in effect)")
-                if defined $id && $self->{verbose};
-            }
-            if (defined $id) {
-                # enqueue Minion testing job
-                # TODO: append Perl version for use with Perlbrew
-                $self->minion->enqueue(test => [module_id => $id]);
-            }
-        }
+        #     # Newly-seen modules are always tested. Can also force testing of old ones.
+        #     if (!defined $id && $self->{force_test}) {
+        #         $id = eval {
+        #             $self->sql->db->query('SELECT id FROM modules WHERE name=? AND version=?',
+        #                                   $module->{fields}->{main_module},
+        #                                   $module->{fields}->{version}
+        #                                  )->hash->{id};
+        #         };
+        #         $self->log->info('Queue test for ' . $module->{fields}->{main_module} .' v' . $module->{fields}->{version}
+        #         . " = $id (--force in effect)")
+        #         if defined $id && $self->{verbose};
+        #     }
+        # }
     }
 
 

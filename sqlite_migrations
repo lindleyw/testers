@@ -1,5 +1,5 @@
 
--- TABLE: Module
+-- TABLE: Dists
 --  ModuleNum		0001				// Unique record number 
 --  Author		BLACKJ				// module author
 --  OptionalDir						// sometimes there is an extra dir in module path name
@@ -30,8 +30,8 @@
 
 -- 1 down
 
-DROP TABLE IF EXISTS modules;
-DROP INDEX IF EXISTS module_idx;
+DROP TABLE IF EXISTS releases;
+DROP INDEX IF EXISTS release_idx;
 DROP TABLE IF EXISTS module_flags;
 DROP INDEX IF EXISTS module_flags_idx;
 DROP TABLE IF EXISTS environments;
@@ -40,19 +40,19 @@ DROP TABLE IF EXISTS tests;
 
 -- 1 up
 
-CREATE TABLE modules (
+CREATE TABLE releases (
                       id INTEGER PRIMARY KEY,
                       name TEXT NOT NULL,
                       version TEXT NOT NULL,
                       released TIMESTAMP,  -- version timestamp
                       author TEXT NOT NULL,
-                      relative_url TEXT,
+                      download_url TEXT,
                       disabled_by TEXT,
                       added TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                       UNIQUE (name, version) ON CONFLICT IGNORE
                     );
 
-CREATE UNIQUE INDEX module_idx ON modules (name, version);
+CREATE UNIQUE INDEX release_idx ON releases (name, version);
 
 -- For storing the complex regexps that will be applied to module names,
 -- thereby determining which modules are enabled and disabled.
@@ -86,7 +86,7 @@ CREATE UNIQUE INDEX environment_idx ON environments (host, perlbrew);
 
 CREATE TABLE tests (
                     id INTEGER PRIMARY KEY,
-                    module_id INTEGER,        -- UUT [unit under test]
+                    dist_id INTEGER,          -- UUT [unit under test]
                     version TEXT,             -- Version number as tested
                     error TEXT,               -- Last or most-severe error encountered
                     environment_id INTEGER,   -- replaces perl_build
@@ -99,6 +99,6 @@ CREATE TABLE tests (
                     -- script_name TEXT,
                     -- script_revision TEXT,    -- from CPAN
                     -- script_date TIMESTAMP,   -- from CPAN
-                    FOREIGN KEY(module_id) REFERENCES modules(id),
+                    FOREIGN KEY(dist_id) REFERENCES releasess(id),
                     FOREIGN KEY(environment_id) REFERENCES environments(id)
 );
