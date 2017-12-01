@@ -175,12 +175,10 @@ package main::Command::dist {
         @perl_versions = split ',', join ',', @perl_versions;
         my $releases =
           $self->app->smoker->get_metacpan( { count => $count,
-                                              force_test => $force_test,
                                               main_module => [split ',', join ',', @dists],
                                               name => [split ',', join ',', @releases],
                                               version => [split ',', join ',', @versions],
                                               author => [split ',', join ',', @authors],
-                                              perl_version => [@perl_versions],
                                               start_date => $start_date,
                                               end_date => $end_date,
                                             } );
@@ -188,6 +186,15 @@ package main::Command::dist {
         # use Data::Dumper;
         # print STDERR Dumper($releases);
 
+        # Ensure we know about which Perl versions are installed
+        $self->app->smoker->update_perl_versions(@args);
+
+        my @perl_test_versions;
+        foreach my $v (@perl_versions) {
+          $DB::single=1;
+          my $vv = $self->app->smoker->get_environment({perl => $v});
+          push @perl_test_versions, $vv if defined $vv;
+        }
         # Enqueue tests for each of those releases.
         if (defined $releases) {
           $self->app->log->info('Enqueueing ' . $releases->size . ' releases') if $verbose;
@@ -200,15 +207,17 @@ package main::Command::dist {
                             #  - Check against cpan/cpanm already-tested list
                             #  - Check against *our* already-tested database
                             # Enqueue Minion testing jobs
-                            $self->app->log->info('  ... ' . $_->{name}) if $verbose;
                             my @args = (release_id => $id);
-                            my @notes = (notes => {module_info => $_});
-                            if (scalar @perl_versions) {
-                              foreach my $v (@perl_versions) {
-                                $self->app->minion->enqueue(test => [@args, perl_version => $v], {@notes});
+                            # TODO: Probably move enqueue() calls into Smoker
+                            if (scalar @perl_test_versions) {
+                              foreach my $v (@perl_test_versions) {
+                                $self->app->log->info('  ... ' . $_->{name} . ' (Perl ' . $v->{perl} . ')')
+                                  if $verbose;
+                                $self->app->minion->enqueue(test => [@args, environment => $v->{id}], {notes => {module_info => $_, perl_version => $v->{perl}}});
                               }
                             } else {
-                              $self->app->minion->enqueue(test => [@args], {@notes});
+                              $self->app->log->info('  ... ' . $_->{name}) if $verbose;
+                              $self->app->minion->enqueue(test => [@args], {notes => {module_info => $_}});
                             }
                           });
         }

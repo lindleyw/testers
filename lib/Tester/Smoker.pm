@@ -228,6 +228,21 @@ package Tester::Smoker {
 
     ################################################################
 
+    sub get_environment {
+      # Retrieves the latest information for a module
+      # TODO: rename to get_release_info
+      my ($self, $where) = @_;
+      my $results = eval {
+        $self->sql->db->select(-from => 'environments',
+                               -where => $where,
+                               -limit => 1,
+                              )->hashes->first;
+      };
+      return $results;
+    }
+
+    ################################################################
+
     sub get_module_info {
       # Retrieves the latest information for a module
       # TODO: rename to get_release_info
@@ -356,9 +371,9 @@ package Tester::Smoker {
                                 -order_by => ['-added'],
                                 -limit => 1 )->hash->{id};
       };
-      $self->smoker->minion->enqueue('test', { dist_id => $release_id,
+      $self->smoker->minion->enqueue('test', [{ dist_id => $release_id,
                                                env_id => $mod_info->{environment_id}
-                                             }, { notes => {module_info => $mod_info}});
+                                             }], { notes => {module_info => $mod_info}});
     }
 
     sub _find_recent {
