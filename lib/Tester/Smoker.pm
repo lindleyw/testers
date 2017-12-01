@@ -38,7 +38,7 @@ package Tester::Smoker {
         # database.  If none (e.g., empty database), or if different
         # from the CPAN we have, update our db with the latest release
         # info from metacpan.
-        my $cpan_module = $self->get_module_info('CPAN')->first;
+        my $cpan_module = $self->get_module_info({name => 'CPAN'})->first;
         if ((!defined $cpan_module) || ($cpan_module->{version} ne $cpan->version)) {
             # NOTE: We cannot use $self->update_module() here, because
             # that depends on the $self->cpan object, which we haven't
@@ -230,9 +230,12 @@ package Tester::Smoker {
 
     sub get_module_info {
         # Retrieves the latest information for a module
-        my ($self, $module) = @_;
+        my ($self, $where, $limit) = @_;
         my $results = eval {
-            $self->sql->db->query('SELECT * FROM releases WHERE name=? ORDER BY released DESC LIMIT 1;', $module)->hashes;
+          $self->sql->db->select(-from => 'releases',
+                                 -where => $where,
+                                 -limit => $limit // 1,
+                                 -order_by => ['-released'])->hashes;
         };
         return $results;
     }

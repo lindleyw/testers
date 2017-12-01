@@ -117,26 +117,28 @@ package main::Command::list {
     sub run {
         my ($self, @args) = @_;
 
-        my $jobs = $self->app->smoker->minion->backend->list_jobs(0, 50,  # offset, limit
+        my $jobs = $self->app->minion->backend->list_jobs(0, 50,  # offset, limit
                                                           {state => $args[0] // 'inactive',    # 'finished' or 'failed' are useful
                                                            task => 'test',
                                                           }
                                                          );
         print Mojo::Util::tablify [ [qw/Job Status Distribution Version Author/],
                                     map {
-                                        if ( $_->{args}[0] eq 'dist_id' ) {
-                                            my $release_id = $_->{args}[1];
-                                            if (!defined $release_id) {
-                                                ()
-                                            } else {
-                                                [ $_->{id}, $_->{state},
-                                                  $self->module_info($release_id)->@{qw/name version author/}]
+                                        if ( $_->{args}[0] eq 'release_id' ) {
+                                          my $release_id = $_->{args}[1];
+                                          my $info = $self->app->smoker->get_module_info({id => $release_id}) if defined $release_id;
+                                          if (!defined $info) {
+                                            ()
+                                          } else {
+                                            [ $_->{id}, $_->{state},
+                                              $info->first->@{qw/name version author/}
+                                            ]
                                             }
                                         } else {
                                             ()
                                         }
                                     }
-                                    @{$jobs} ];
+                                    @{$jobs->{jobs}} ];
         return;
     }
 };
@@ -161,30 +163,6 @@ Options:
         my ($self, @args) = @_;
 
         return $self->app->smoker->update_perl_versions(@args);
-    }
-};
-
-package main::Command::update_module {
-    use Mojo::Base 'Mojolicious::Command';
-
-    has 'description' => '';
-
-    sub run {
-        my ($self, @args) = @_;
-
-        return $self->app->smoker->update_module(@args);
-    }
-};
-
-package main::Command::test_module {
-    use Mojo::Base 'Mojolicious::Command';
-
-    has 'description' => '';
-
-    sub run {
-        my ($self, @args) = @_;
-
-        return 0;
     }
 };
 

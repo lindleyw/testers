@@ -357,7 +357,7 @@ package CPAN::Wrapper {
         # NOTE: Above could request $module->{fields}->{provides}
         # which would contain a list of provided (sub)modules
 
-        print STDERR Mojo::JSON::encode_json($req) . "\n";
+        # print STDERR Mojo::JSON::encode_json($req) . "\n";
         my $modules = $ua->post($source_url => json => $req)->result;
         my $module_list = defined ($modules) ? Mojo::JSON::decode_json($modules->body) : {};
 
