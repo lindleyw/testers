@@ -21,12 +21,10 @@ use Tester::Smoker;
 ################################################################
 
 # Can be called as, e.g.,
-#   $ perl smoketest update ~/Documents/02packages.details.txt -m rebuild
-# to rebuild and reload database from a local file, or:
 #   $ perl smoketest update
-# to update from the default CPAN location (remote URL)
+# to update from the metaCPAN API.
 
-# ./smoketest module --author PREACTION --count 5 --start_date=2012-07-01 --end_date=2012-12-30 -v -f
+# ./smoketest release --author PREACTION --count 5 --start_date=2012-07-01 --end_date=2012-12-30
 
 ################################################################
 
@@ -258,11 +256,12 @@ package main::Command::dist {
     use Mojo::Base 'Mojolicious::Command';
     use Mojo::Util qw(getopt);
 
-    has 'description' => '';
+    has 'description' => 'Enqueues tests for CPAN distributions';
 
     sub run {
         my ($self, @args) = @_;
         getopt \@args, [qw(auto_abbrev)],
+          'v|verbose' => \my $verbose,   # Note abbrev, versus -version below
           'count=i' => \my $count,
           'force'   => \my $force_test,
           'distribution|distro=s' => \my @dists,
@@ -292,6 +291,7 @@ package main::Command::dist {
 
         # Enqueue tests for each of those releases.
         if (defined $releases) {
+          $self->app->log->info('Enqueueing ' . $releases->size . ' releases') if $verbose;
           $releases->each(sub {
                             my $id = $_->{id};
                             # TODO:
@@ -301,6 +301,7 @@ package main::Command::dist {
                             #  - Check against cpan/cpanm already-tested list
                             #  - Check against *our* already-tested database
                             # Enqueue Minion testing jobs
+                            $self->app->log->info('  ... ' . $_->{name}) if $verbose;
                             if (scalar @perl_versions) {
                               foreach my $v (@perl_versions) {
                                 $self->app->minion->enqueue(test => [release_id => $id, perl_version => $v]);

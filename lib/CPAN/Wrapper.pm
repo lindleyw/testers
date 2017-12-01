@@ -30,7 +30,8 @@ package CPAN::Wrapper {
         return $CPAN::VERSION;
     }
 
-    use CPAN::Reporter::History;
+    # TODO: Consider adding:
+    # use CPAN::Reporter::History;
     # NOTE: have_tested() returns a list of hashes, e.g.,
     # 0  HASH(0x4070958)
     #    'archname' => 'x86_64-linux'
@@ -335,12 +336,19 @@ package CPAN::Wrapper {
         # NOTE: For a Release,
         # 'main_module' (e.g., 'Mojolicious') is the name of a Distribution
         # 'name'  (e.g., 'Mojolicious-7.46') is the full release name+version.
+        my @want_versions;
+        # Default to status=latest, unless we specify versions
+        @want_versions = _item_list(['version', {term => {'status' => 'latest'}}], $args->{version});
+        # Omit the version field if full release names are given
+        if (defined $args->{name} && scalar @{$args->{name}}) {
+          @want_versions = ();
+        }
         my $req = { 'size' => $args->{count} // 10,
                     'fields' => [qw(name version date author download_url main_module)],  # could add:  provides
-                    'filter' => {'and' => [_item_list('main_module', $args->{dist}), # e.g., 'Mojolicious'
-                                           _item_list('name', $args->{release}),     # e.g., 'Mojolicious-7.46'
+                    'filter' => {'and' => [_item_list('main_module', $args->{main_module}), # e.g., 'Mojolicious'
+                                           _item_list('name', $args->{name}),     # e.g., 'Mojolicious-7.46'
                                            _item_list('author', $args->{author}),
-                                           _item_list(['version', {term => {'status' => 'latest'}}], $args->{version}),
+                                           @want_versions,
                                           ]},
                     'query' => { # optional range, otherwise 'all'
                                 _date_range( $args->{start_date}, $args->{end_date} ) },
@@ -349,7 +357,7 @@ package CPAN::Wrapper {
         # NOTE: Above could request $module->{fields}->{provides}
         # which would contain a list of provided (sub)modules
 
-        # print STDERR Mojo::JSON::encode_json($req);
+        print STDERR Mojo::JSON::encode_json($req) . "\n";
         my $modules = $ua->post($source_url => json => $req)->result;
         my $module_list = defined ($modules) ? Mojo::JSON::decode_json($modules->body) : {};
 
