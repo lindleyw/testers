@@ -92,9 +92,9 @@ package Tester::Smoker {
         if ($env->size) {
             return $env->first->{id};
         } else {
-            my @args = (hostname(), @Config{qw(osname osvers version)});
-            return $self->sql->db->query('INSERT INTO environments (host, osname, osvers, perl) VALUES (?,?,?,?)',
-                                         hostname(), @Config{qw(osname osvers version)})->last_insert_id;
+            my @args = (hostname(), @Config{qw(osname osvers version archname)});
+            return $self->sql->db->query('INSERT INTO environments (host, osname, osvers, perl, archname) VALUES (?,?,?,?)',
+                                         hostname(), @Config{qw(osname osvers version archname)})->last_insert_id;
         }
     }
 
@@ -114,14 +114,14 @@ package Tester::Smoker {
                 };
                 if (defined $id) {
                     # Newly-added version
-                    my $version_specific = `perlbrew exec --with $v perl -MConfig -MSys::Hostname -e 'print join("\n", %Config{qw(osname osvers version)})'`;
+                    my $version_specific = `perlbrew exec --with $v perl -MConfig -MSys::Hostname -e 'print join("\n", %Config{qw(osname osvers version archname)})'`;
                     # returns, e.g.:  (perl-5.24.1)\n===...===\n and results
                     if ($version_specific =~ /===\s+(.*?)\s*\z/s) {
                         my $version_info = {split /\n/, $1};
                         eval {
                             $self->sql->db->query('UPDATE environments '.
-                                                  'SET osname=?, osvers=?, perl=? WHERE id=?',
-                                                  $version_info->@{qw(osname osvers version)}, # hash slice
+                                                  'SET osname=?, osvers=?, perl=?, archname=? WHERE id=?',
+                                                  $version_info->@{qw(osname osvers version archname)}, # hash slice
                                                   $id
                                                  );
                         };
@@ -417,23 +417,25 @@ package Tester::Smoker {
         my $minion_job = shift;
         my $args = {@_};
 
-        my $module_id = $args->{module_id};
-        my $env_id = $args->{environment_id};
+        my $release_id = $args->{release_id};
+        my $env_id = $args->{environment};
         my ($perlbuild, $perlbuild_id);
         my $grade;
 
-        if (! $module_id) {
+        if (! $release_id) {
             $self->log->error("No module_id");
             return 0;
         }
 
-        my $module_info = $self->sql->db->query('SELECT name, version, author, download_url FROM releases WHERE modules.id=?',
-                                            $module_id)->hashes;
+        my $module_info = $self->sql->db->select(-from => 'releases',
+                                                 -where => {id => $release_id}
+                                                )->hashes;
         return 0 unless defined $module_info;
         $module_info = $module_info->first;
 
+        ; $DB::single = 1;
         # Check against 'disabled' regex; if matches, fail with error.
-        if (!$self->_enabled_after_regexes($module_id)) {  # module is disabled
+        if (!$self->_enabled_after_regexes($release_id)) {  # module is disabled
             $self->log->warn("module is disabled");
             $minion_job->fail("module is disabled");
             return 0;
@@ -504,8 +506,8 @@ package Tester::Smoker {
         $minion_job->finish("Ran test for $tested_module");
 
         # Enqueue the report to be processed and sent later
-        $self->minion->enqueue(report => [module => $module,
-                                          module_id => $module_id,
+        $self->minion->enqueue(report => [release => $module,
+                                          release_id => $release_id,
                                           perlbuild => $perlbuild,
                                           grade => $grade,
                                           (defined $command) ? (command => $command) : (),

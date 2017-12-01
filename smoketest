@@ -270,7 +270,7 @@ package main::Command::do {
 
     sub run {
         my ($self) = @_;
-        $self->smoker->minion->perform_jobs();
+        $self->app->minion->perform_jobs();
     }
     
 };

@@ -79,6 +79,7 @@ CREATE TABLE environments (
                            perl       TEXT,   -- Perl version, $Config{version}
                            osname     TEXT,   -- from $Config{osname}
                            osvers     TEXT,   -- $Config{osvers}
+                           archname   TEXT,   -- $Config{archname}
                            added TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                            );
 
