@@ -47,7 +47,7 @@ package main::Command::list {
                                     map {
                                         if ( $_->{args}[0] eq 'release_id' ) {
                                           my $release_id = $_->{args}[1];
-                                          my $info = $self->app->smoker->get_module_info({id => $release_id}) if defined $release_id;
+                                          my $info = $self->app->smoker->get_release_info({id => $release_id}) if defined $release_id;
                                           if (!defined $info) {
                                             ()
                                           } else {
@@ -106,7 +106,7 @@ Options:
     sub run {
         my ($self, @args) = @_;
 
-        return $self->app->smoker->save_regex(@args);
+        return $self->app->smoker->fetch_and_save_regex(@args);
     }
 
 };
@@ -191,7 +191,6 @@ package main::Command::dist {
 
         my @perl_test_versions;
         foreach my $v (@perl_versions) {
-          $DB::single=1;
           my $vv = $self->app->smoker->get_environment({perl => $v});
           push @perl_test_versions, $vv if defined $vv;
         }

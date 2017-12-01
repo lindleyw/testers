@@ -38,14 +38,14 @@ package Tester::Smoker {
         # database.  If none (e.g., empty database), or if different
         # from the CPAN we have, update our db with the latest release
         # info from metacpan.
-        my $cpan_module = $self->get_module_info({name => 'CPAN'})->first;
+        my $cpan_module = $self->get_release_info({name => 'CPAN'})->first;
         if ((!defined $cpan_module) || ($cpan_module->{version} ne $cpan->version)) {
             # NOTE: We cannot use $self->update_module() here, because
             # that depends on the $self->cpan object, which we haven't
             # defined yet.
             $cpan_module = $cpan->get_module_info('CPAN','release');   # Fetch latest version from metacpan
             if (defined $cpan_module) {
-                $cpan_module->{_db_id} = $self->save_module_info($cpan_module);  # keep new id value
+                $cpan_module->{_db_id} = $self->save_release_info($cpan_module);  # keep new id value
                 $self->_update_regex(1);
             }
         }
@@ -143,7 +143,7 @@ package Tester::Smoker {
         if (defined $regex) {
           my $saved = $self->sql->db->query('INSERT OR REPLACE INTO module_flags (priority, origin, author, disable, regex) '.
                                             'VALUES (?,?,?,?,?)',
-                                            @{$regex}{qw(priority reason author disabled regex)}
+                                            @{$regex}{qw(priority reason author disable regex)}
                                            );
           return 1;
         }
@@ -191,24 +191,27 @@ package Tester::Smoker {
         };
         return undef unless defined $module_info;
 
+        # ; $DB::single = 1;
         $module_info->each( sub {
-                                my $module_id = $_->{id};
-                                my $regex_match = join('/', $_->{author}, $_->{name});
-                                my $disabled_by;
-                                $regex_list->each(sub {
-                                                      if ($regex_match =~ $_->{regex}) {
-                                                          if ($_->{disable}) {
-                                                              $disabled_by = $_->{origin};
-                                                          } else {
-                                                              undef $disabled_by; # enable
-                                                          }
-                                                      }
-                                                  });
-                                # Save final enabled/disabled status
-                                eval { $self->sql->db->update(-name => 'releases',
-                                                              -set => { disabled_by => $disabled_by },
-                                                              -where => { id => $module_info->{id} });
-                                       $self->log->info("Module $_->{name} disabled by regex");
+                              my $module_id = $_->{id};
+                              my $regex_match = join('/', $_->{author}, $_->{name});
+                              my $disabled_by;
+                              $regex_list->each(sub {
+                                                  my $against = $_->{regex};
+                                                  $against =~ s/\|\s*\z//;  # Remove any trailing pipe
+                                                  if ($regex_match =~ $against) {
+                                                    if ($_->{disable}) {
+                                                      $disabled_by = $_->{origin};
+                                                    } else {
+                                                      undef $disabled_by; # enable
+                                                    }
+                                                  }
+                                                });
+                              # Save final enabled/disabled status
+                              eval { $self->sql->db->update(-table => 'releases',
+                                                            -set => { disabled_by => $disabled_by },
+                                                            -where => { id => $module_id });
+                                     $self->log->info("Module $_->{name} disabled by regex");
                                    };
                             } );
         return 1;
@@ -216,14 +219,23 @@ package Tester::Smoker {
 
     sub check_regex {
         my $self = shift;
-        # my $minion_job = shift;
         my $args = {@_};
 
-        if (ref $args->{module_id} eq 'Mojo::Collection') { # Flatten into array of id values
-            $args->{module_id} = $args->{module_id}->map(sub {$_->{id}})->to_array;
+        if (ref $args->{release_id} eq 'Mojo::Collection') { # Flatten into array of id values
+            $args->{release_id} = $args->{module_id}->map(sub {$_->{id}})->to_array;
         }
-        $self->_check_regexes($args->{module_id});   # scalar or arrayref OK
+        return $self->_check_regexes($args->{release_id});   # scalar or arrayref OK
+    }
 
+    sub release_disabled_by {
+        my ($self, $release_id) = @_;
+        $self->check_regex(release_id => $release_id);
+        my $check = eval {
+          $self->sql->db->select(-from => 'releases',
+                                 -columns => 'disabled_by',
+                                 -where => {id => $release_id})->hashes->first;
+        };
+        return defined $check ? $check->{disabled_by} : undef;
     }
 
     ################################################################
@@ -243,7 +255,7 @@ package Tester::Smoker {
 
     ################################################################
 
-    sub get_module_info {
+    sub get_release_info {
       # Retrieves the latest information for a module
       # TODO: rename to get_release_info
       my ($self, $where, $limit) = @_;
@@ -258,7 +270,7 @@ package Tester::Smoker {
 
     ################
 
-    sub save_module_info {
+    sub save_release_info {
       # TODO: rename to save_release_info
         my ($self, $fields) = @_;
 
@@ -283,7 +295,7 @@ package Tester::Smoker {
 
         my $module_fields = $self->cpan->get_module_info($module_name, $type);
         if (defined $module_fields) {
-            $module_fields->{_db_id} = $self->save_module_info($module_fields);  # keep new id value
+            $module_fields->{_db_id} = $self->save_release_info($module_fields);  # keep new id value
         }
         return $module_fields;
     }
@@ -433,11 +445,11 @@ package Tester::Smoker {
         return 0 unless defined $module_info;
         $module_info = $module_info->first;
 
-        ; $DB::single = 1;
         # Check against 'disabled' regex; if matches, fail with error.
-        if (!$self->_enabled_after_regexes($release_id)) {  # module is disabled
-            $self->log->warn("module is disabled");
-            $minion_job->fail("module is disabled");
+        my $dis_by = $self->release_disabled_by($release_id);
+        if ($dis_by) {  # module is disabled
+            $self->log->warn("module is disabled by $dis_by");
+            $minion_job->fail("module is disabled by $dis_by");
             return 0;
         }
 
