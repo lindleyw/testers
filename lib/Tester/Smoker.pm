@@ -229,20 +229,22 @@ package Tester::Smoker {
     ################################################################
 
     sub get_module_info {
-        # Retrieves the latest information for a module
-        my ($self, $where, $limit) = @_;
-        my $results = eval {
-          $self->sql->db->select(-from => 'releases',
-                                 -where => $where,
-                                 -limit => $limit // 1,
-                                 -order_by => ['-released'])->hashes;
-        };
-        return $results;
+      # Retrieves the latest information for a module
+      # TODO: rename to get_release_info
+      my ($self, $where, $limit) = @_;
+      my $results = eval {
+        $self->sql->db->select(-from => 'releases',
+                               -where => $where,
+                               -limit => $limit // 1,
+                               -order_by => ['-released'])->hashes;
+      };
+      return $results;
     }
 
     ################
 
     sub save_module_info {
+      # TODO: rename to save_release_info
         my ($self, $fields) = @_;
 
         # results from /release have a 'main_module';
@@ -323,6 +325,74 @@ package Tester::Smoker {
         return $self->save_releases(Mojo::Collection->new($self->cpan->get_metacpan($args)));
     }
 
+    ################################################################
+    ###
+    ### (Mothballed)
+    ### Currently unused, these pick releases from our database
+    ### versus asking MetaCPAN.
+    ###
+
+    sub _pick {
+      # Similar to the hash slice, » $hash->%{@elements} «
+      # but only picks defined entries.
+      my ($hash, @elements) = @_;
+      return map { exists $hash->{$_} ? ( $_, $hash->{$_} ) : () } @elements;
+    }
+
+    sub _add_test {
+      # Run a test on a given release (module+version), on a given
+      # version of Perl
+      my ($self, $mod_info) = @_;
+    
+      my $release_id = $mod_info->{dist_id} // eval {
+        # Because of the index `dist_idx`, choosing the most-recent
+        # distribution by name will always give us the latest version
+
+        # TODO: use $self->get_module_info() instead of db query here
+        $self->app->db->select( -from => 'releases',
+                                -columns => ['id'],
+                                -where => { _pick ( $mod_info,
+                                                    qw(name version) ) },
+                                -order_by => ['-added'],
+                                -limit => 1 )->hash->{id};
+      };
+      $self->smoker->minion->enqueue('test', { dist_id => $release_id,
+                                               env_id => $mod_info->{environment_id}
+                                             }, { notes => {module_info => $mod_info}});
+    }
+
+    sub _find_recent {
+      my ($self, $mod_info, $limit) = @_;
+
+      # example of passing more complex queries to _find_recent:
+      #   _find_recent($self,{author =>'ANDK', name => {'LIKE', 'CPAN%'}})
+      #   _find_recent($self,{added => {'>',\["datetime('now', ?)", '-21 day']}})
+
+      my $releases =
+        $self->app->db->select( -from => 'releases',
+                                # grouping by name after selecting max(added)
+                                # guarantees we get the most-recently-added version
+                                # for each module name
+                                -columns => ['id', 'name', 'max(added) as added'],
+                                -where => { _pick ( $mod_info,
+                                                    qw(name version author added) ),
+                                            disabled_by => undef, # not disabled
+                                          },
+                                -group_by => ['name'],
+                                -order_by => ['-added'], # most-recent first
+                                (defined $limit) ? (-limit => $limit) : (),
+                              );
+      return $releases->hashes; # as a Mojo::Collection
+    }
+
+    sub _find_recent_days {
+      my ($self, $day_count, $limit) = @_;
+      return _find_recent($self,{added => {'>',\["datetime('now', ?)", -$day_count.' days']}}, $limit);
+    }
+
+    ###
+    ### End mothballed section
+    ###
     ################################################################
 
     use TestModule;

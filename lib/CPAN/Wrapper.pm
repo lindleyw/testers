@@ -129,6 +129,14 @@ package CPAN::Wrapper {
 
     ################
 
+    # Find CPAN in the list of distributions (it's currently under
+    # ANDK's directory).  Get the current revision's list of disabled
+    # dists and use that to refresh the disabled list
+
+    # When download_url is 'A/AN/ANDK/CPAN-2.16.tar.gz' name is CPAN,
+    # version is 2.16 -- Fetch
+    # https://st.aticpan.org/source/ANDK/CPAN-2.16/distroprefs/01.DISABLED.yml
+
     sub disabled_regex_url {
       my ($self) = @_;
       my $source_url = Mojo::URL->new($self->config->{source});

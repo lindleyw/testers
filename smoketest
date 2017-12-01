@@ -24,95 +24,16 @@ use Tester::Smoker;
 #   $ perl smoketest update
 # to update from the metaCPAN API.
 
-# ./smoketest release --author PREACTION --count 5 --start_date=2012-07-01 --end_date=2012-12-30
+# ./smoketest release --author PREACTION --count 5 \
+#   --start_date=2012-07-01 --end_date=2012-12-30
 
-################################################################
-
-# Find CPAN in the list of distributions (it's currently under ANDK's directory)
-# Get the current revision's list of disabled dists and use that to refresh the disabled list
-
-# When download_url is 'A/AN/ANDK/CPAN-2.16.tar.gz' name is CPAN, version is 2.16 --
-# Fetch https://st.aticpan.org/source/ANDK/CPAN-2.16/distroprefs/01.DISABLED.yml
-
-sub _pick {
-     # Similar to the hash slice, » $hash->%{@elements} «
-     # but only picks defined entries.
-     my ($hash, @elements) = @_;
-     return map { exists $hash->{$_} ? ( $_, $hash->{$_} ) : () } @elements;
-}
-
-sub _add_test {
-    # Run a test on a given release (module+version), on a given
-    # version of Perl
-    my ($self, $mod_info) = @_;
-    
-    my $release_id = $mod_info->{dist_id} // eval {
-         # Because of the index `dist_idx`, choosing the most-recent
-         # distribution by name will always give us the latest version
-         $self->app->db->select( -from => 'releases',
-                                 -columns => ['id'],
-                                 -where => { _pick ( $mod_info,
-                                                     qw(name version) ) },
-                                 -order_by => ['-added'],
-                                 -limit => 1 )->hash->{id};
-    };
-    $self->smoker->minion->enqueue('test', { dist_id => $release_id,
-                                             env_id => $mod_info->{environment_id}
-                                           });
-}
-
-sub _find_recent {
-    my ($self, $mod_info, $limit) = @_;
-
-    # example of passing more complex queries to _find_recent:
-    #   _find_recent($self,{author =>'ANDK', name => {'LIKE', 'CPAN%'}})
-    #   _find_recent($self,{added => {'>',\["datetime('now', ?)", '-21 day']}})
-
-    my $releases =
-         $self->app->db->select( -from => 'releases',
-                                 # grouping by name after selecting max(added)
-                                 # guarantees we get the most-recently-added version
-                                 # for each module name
-                                 -columns => ['id', 'name', 'max(added) as added'],
-                                 -where => { _pick ( $mod_info,
-                                                     qw(name version author added) ),
-                                             disabled_by => undef, # not disabled
-                                           },
-                                 -group_by => ['name'],
-                                 -order_by => ['-added'],  # most-recent first
-                                 (defined $limit) ? (-limit => $limit) : (),
-                               );
-    return $releases->hashes;      # as a Mojo::Collection
-}
-
-sub _find_recent_days {
-    my ($self, $day_count, $limit) = @_;
-    return _find_recent($self,{added => {'>',\["datetime('now', ?)", -$day_count.' days']}}, $limit)
-}
-
-# TODO: api for selecting the number of modules added on a given date
-# sqlite> select date(added), count(added) from modules group by date(added);
-
-################################################################
-################################################################
 ################################################################
 
 package main::Command::list {
     use Mojo::Base 'Mojolicious::Command';
     use Minion::Backend;
 
-    has 'description' => '';
-
-    sub module_info {
-        my ($self, $id) = @_;
-        return eval {
-            # Because of the index `module_idx`, choosing the most-recent
-            # module by name will always give us the latest version
-            $self->app->db->select( -from => 'modules',
-                                    -where => { id => $id },
-                                    -limit => 1 )->hashes->first;
-        };
-    }
+    has 'description' => 'List currently-enqueued tests to be run';
 
     sub run {
         my ($self, @args) = @_;
@@ -280,12 +201,14 @@ package main::Command::dist {
                             #  - Check against *our* already-tested database
                             # Enqueue Minion testing jobs
                             $self->app->log->info('  ... ' . $_->{name}) if $verbose;
+                            my @args = (release_id => $id);
+                            my @notes = (notes => {module_info => $_});
                             if (scalar @perl_versions) {
                               foreach my $v (@perl_versions) {
-                                $self->app->minion->enqueue(test => [release_id => $id, perl_version => $v]);
+                                $self->app->minion->enqueue(test => [@args, perl_version => $v], {@notes});
                               }
                             } else {
-                              $self->app->minion->enqueue(test => [release_id => $id]);
+                              $self->app->minion->enqueue(test => [@args], {@notes});
                             }
                           });
         }
@@ -372,19 +295,6 @@ plugin 'Config';
 
 helper smoker => sub {
     my ($self) = @_;
-
-    # getopt
-    # 'a|author=s'  => \my @authors,
-    # 'module=s'    => \my @modules,
-    # 'r|recent=i'  => \my $freshness,  # in days
-    # 'rev|revision|version=s' => \my @versions,  # probably should change meaning of 'count'
-    # 'perl=s'      => \my @perl_versions,  # probably should change meaning of 'count'
-    # 'c|count=i'   => \my $count,
-    # 'start|start_date=s', \my $start_date,
-    # 'end|end_date=s', \my $end_date,
-    # 'f|force'     => \my $force_test,
-    # 'v|verbose'   => \my $verbose,
-    # ;
 
     state $smoker = Tester::Smoker->new(database => $self->config->{dbname},
                                         config   => $self->config,
