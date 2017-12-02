@@ -519,7 +519,9 @@ package Tester::Smoker {
                                                  tested_module => $tested_module,
                                                  minion_job => $minion_job->info->{id},
                                                 }
-                                               ]);
+                                               ],
+                                     { parents => [$minion_job->info->{id}],
+                                     });
         $self->log->info("Report enqueued");
     }
 
