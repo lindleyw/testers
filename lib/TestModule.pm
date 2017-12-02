@@ -4,6 +4,7 @@ use v5.10;
 use Data::Dumper;
 use Mojo::File;
 use File::Temp;
+use Config;
 use CPAN::Testers::Common::Client::Config;
 use Time::HiRes qw(gettimeofday);
 
@@ -42,8 +43,10 @@ sub test_module {
     local $ENV{PERL_CPANM_HOME} = $temp_dir_name;
     my ($secs, $msec) = gettimeofday();
     # my $temp_log = "/media/sg/logs/log.$secs.$msec";
-    my $cpanm_test_command = "perlbrew exec --with $perl_release ";
-    $cpanm_test_command .= "cpanm --test-only $module"; # " > $temp_log 2>&1 ";
+    my $cpanm_test_command = "perlbrew exec";
+    $perl_release //= $Config{version};   # use version currently executing
+    $cpanm_test_command .= " --with $perl_release";
+    $cpanm_test_command .= " cpanm --test-only $module"; # " > $temp_log 2>&1 ";
     # XXX: Maybe 2> error log?
     # TODO: Look for '!' in log files and report error
 

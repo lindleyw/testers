@@ -87,14 +87,19 @@ package Tester::Smoker {
         # Returns the id of our native (non-Perlbrew) environment, adding it if required
         my $self = shift;
 
-        my $env = $self->sql->db->query('SELECT id FROM environments WHERE host=? AND perl=? AND perlbrew IS NULL',
-                                        hostname(),$Config{version})->hashes;
-        if ($env->size) {
+        ; $DB::single = 1;
+        my $my_config = {host => hostname(),
+                         %Config{qw(osname osvers archname)},  # hash slice
+                         perl => $Config{version},
+                        };
+        my $env = eval { $self->sql->db->select(-from => 'environments',
+                                                -columns => ['id'],
+                                                -where => $my_config)->hashes; };
+        if (defined $env && $env->size) {
             return $env->first->{id};
         } else {
-            my @args = (hostname(), @Config{qw(osname osvers version archname)});
-            return $self->sql->db->query('INSERT INTO environments (host, osname, osvers, perl, archname) VALUES (?,?,?,?)',
-                                         hostname(), @Config{qw(osname osvers version archname)})->last_insert_id;
+            return $self->sql->db->insert(-into => 'environments',
+                                          -values => $my_config)->last_insert_id;
         }
     }
 
@@ -211,7 +216,8 @@ package Tester::Smoker {
                               eval { $self->sql->db->update(-table => 'releases',
                                                             -set => { disabled_by => $disabled_by },
                                                             -where => { id => $module_id });
-                                     $self->log->info("Module $_->{name} disabled by regex");
+                                     $self->log->info("Module $_->{name} disabled by regex")
+                                       if defined $disabled_by;
                                    };
                             } );
         return 1;
@@ -431,7 +437,7 @@ package Tester::Smoker {
 
         my $release_id = $args->{release_id};
         my $env_id = $args->{environment};
-        my ($perlbuild, $perlbuild_id);
+        my $perlbuild;
         my $grade;
 
         if (! $release_id) {
@@ -453,13 +459,7 @@ package Tester::Smoker {
             return 0;
         }
 
-        $module_info->{download_url} =~ m{/([^/]+?)\z};
-
-        my $module_specific = $1;
-        return 0 unless defined $module_specific;
-
-        my $module = $module_info->{name};
-        $self->log->info("Testing: (($module)) (($module_info->{version}))");  # TODO: Add minion job number
+        $self->log->info("Testing: $module_info->{name} version $module_info->{version}");
 
         # actually test the module
 
@@ -481,29 +481,30 @@ package Tester::Smoker {
                           error_log => undef,   # retrying a failed job
                          );
 
-        # if (!defined $env_id) { # use currently installed version
-        #     # $^V  Perl version as 'v5.26.0'
-        #     $perlbuild_id = $self->my_environment();
-        #     # NOTE: For possible later use.
-        #     ($build_log, $build_error_log, $grade) = CPAN::Wrapper::run_test(join('/',
-        #                                                                           $module_info->{author},
-        #                                                                           $module_specific));
-        # }
-        # else {  # use Perlbrew
-        my $pb = $self->sql->db->query('SELECT id, perlbrew FROM environments WHERE id=?',
-                                       $env_id)->hashes;
-        if (defined $pb) {
-          $perlbuild = $pb->first->{perlbrew};
-          $perlbuild_id = $pb->first->{id};
-          $self->log->info("Using Perlbrew $perlbuild");
-        } else {
-          $self->log->error("Can't find Perlbrew environment with id=$env_id");
-          $minion_job->fail("Can't find Perlbrew environment with id=$env_id");
-          return 0;
+        if (!defined $env_id) { # use currently installed version
+             # $^V  Perl version as 'v5.26.0'
+             $env_id = $self->my_environment();
+             # NOTE: For possible later use.
+             #     ($build_log, $build_error_log, $grade) = CPAN::Wrapper::run_test(join('/',
+             #                                                                           $module_info->{author},
+             #                                                                           $module_specific));
+        } else {  # use Perlbrew
+            my $pb = eval { $self->sql->db->select(-from => 'environments',
+                                                   -where => {id => $env_id})->hashes->first; };
+            if (defined $pb) {
+                $perlbuild = $pb->first->{perlbrew};
+                # $perlbuild_id = $pb->first->{id};
+                $self->log->info("Using Perlbrew $perlbuild");
+            } else {
+                $self->log->error("Can't find Perlbrew environment with id=$env_id");
+                $minion_job->fail("Can't find Perlbrew environment with id=$env_id");
+                return 0;
+            }
         }
 
-        my $result = TestModule::test_module( module => $module_info->{download_url},
-                                              perl_release => $perlbuild );
+        my $result = TestModule::test_module({module => $module_info->{download_url},
+                                              perl_release => $perlbuild
+                                             });
         # Save with a hash slice
         # NB: build_error_log is actually the result log
         ($build_log, $build_error_log, $grade) = @$result{qw(build_log report grade)};
@@ -514,11 +515,11 @@ package Tester::Smoker {
                           result_log => $build_error_log,
                           grade => $grade,
                          );
-
+        $self->log->info("Ran test for $tested_module");
         $minion_job->finish("Ran test for $tested_module");
 
         # Enqueue the report to be processed and sent later
-        $self->minion->enqueue(report => [release => $module,
+        $self->minion->enqueue(report => [release => $module_info->{name},
                                           release_id => $release_id,
                                           perlbuild => $perlbuild,
                                           grade => $grade,
