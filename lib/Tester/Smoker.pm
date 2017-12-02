@@ -87,7 +87,7 @@ package Tester::Smoker {
         # Returns the id of our native (non-Perlbrew) environment, adding it if required
         my $self = shift;
 
-        ; $DB::single = 1;
+        # ; $DB::single = 1;
         my $my_config = {host => hostname(),
                          %Config{qw(osname osvers archname)},  # hash slice
                          perl => $Config{version},
@@ -511,23 +511,25 @@ package Tester::Smoker {
         # }
 
         # XXX: If the ->note() method is not called above, this fails?
-        $minion_job->note(build_log => $build_log,
-                          result_log => $build_error_log,
-                          grade => $grade,
-                         );
+        $minion_job->note(build_log => $build_log);
+        $minion_job->note(result_log => $build_error_log);
+        $minion_job->note(grade => $grade);
         $self->log->info("Ran test for $tested_module");
         $minion_job->finish("Ran test for $tested_module");
 
         # Enqueue the report to be processed and sent later
-        $self->minion->enqueue(report => [release => $module_info->{name},
-                                          release_id => $release_id,
-                                          perlbuild => $perlbuild,
-                                          grade => $grade,
-                                          (defined $command) ? (command => $command) : (),
-                                          tested_module => $tested_module,
-                                          minion_job => $minion_job->info->{id},
-                                         ]);
-
+        $self->log->info("enqueueing Report");
+        $minion_job->minion->enqueue(report => [{release => $module_info->{name},
+                                                 release_id => $release_id,
+                                                 perlbuild => $perlbuild,
+                                                 environment => $env_id,
+                                                 grade => $grade,
+                                                 (defined $command) ? (command => $command) : (),
+                                                 tested_module => $tested_module,
+                                                 minion_job => $minion_job->info->{id},
+                                                }
+                                               ]);
+        $self->log->info("Report enqueued");
     }
 
     ################

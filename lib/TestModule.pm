@@ -177,8 +177,7 @@ sub check_exit {
     # -1 means failure to execute the command at all
     # other values as below
 
-    ; $DB::single = 1;
-    die "FIXME hey you , process the Stderr and look for lines with '!' in them?";
+    # die "FIXME hey you , process the Stderr and look for lines with '!' in them?";
 
     print STDERR "*** $stderr ***\n" if defined $stderr;
 
@@ -187,7 +186,7 @@ sub check_exit {
           ? " with signal: $signal_received"
           : '';
     }
-    return undef if ( $exit == 0 );
+    return undef if ( !$exit );
 
     if ( $exit == -1 ) {
         return "$what failed to execute: $!";
