@@ -42,34 +42,22 @@ sub test_module {
 
     local $ENV{PERL_CPANM_HOME} = $temp_dir_name;
     my ($secs, $msec) = gettimeofday();
-    # my $temp_log = "/media/sg/logs/log.$secs.$msec";
-    my $cpanm_test_command = "perlbrew exec";
-    $perl_release //= $Config{version};   # use version currently executing
-    $cpanm_test_command .= " --with $perl_release";
-    $cpanm_test_command .= " cpanm --test-only $module"; # " > $temp_log 2>&1 ";
+
+    # Build test command
+    my $cpanm_test_command = "cpanm --test-only $module";
+    if (defined $perl_release) {   # prepend to use Perlbrew
+        $cpanm_test_command = "perlbrew exec  --with $perl_release " . $cpanm_test_command;
+    }
+
     # XXX: Maybe 2> error log?
+    # XXX: WAS: " > $temp_log 2>&1 ";
     # TODO: Look for '!' in log files and report error
 
-    say "cpanm_test_command $cpanm_test_command" if ($verbose);
+    say "  Shelling to: $cpanm_test_command" if ($verbose);
 
-    my $check_msg;
-    $check_msg = check_exit( 'test', $cpanm_test_command )
-      ;    # Error string if defined, undef = ok
+    my $test_exit = check_exit( $cpanm_test_command );
 
     my $build_file = Mojo::File->new($temp_dir_name)->child('build.log');
-
-# Regrettably, the system() command returns 1 both in the case of a module which
-# cannot be found, and in the case of a module which was tested and failed.
-# TODO: Can we resolve the difference between those cases?  Do we need to?
-    $error .= $check_msg if defined $check_msg;
-
-# ## XXX: Nice, but wrong. See above.
-# if (defined $check_msg) {  # If an error occurred above,
-#     return { success => 0,
-#              error => $check_msg,
-#              ( -e $build_file ) ? (build_log => $build_file->slurp) : () # Build log contents, if exists
-#            };
-# }
 
     # Both the build log and the report log, can go into the same directory
     # cpanm-reporter will put its report in the directory
@@ -96,28 +84,23 @@ transport=File $temp_dir_name
 CONFIG
 
     my $cpanm_reporter_command =
-        "perlbrew exec --with $perl_release "
-      . "cpanm-reporter --verbose "
+      "cpanm-reporter --verbose "
       . "--build_dir=$temp_dir_name "
       . "--build_logfile=$build_file "
       . "--skip-history --ignore-versions --force ";
-
-    if (
-        defined(
-            $check_msg = check_exit( 'reporter', $cpanm_reporter_command )
-        )
-      )
-    {
-        $error .= "$check_msg\n";
+    if (defined $perl_release) {  # prepend for Perlbrew
+        $cpanm_reporter_command = "perlbrew exec --with $perl_release " . $cpanm_reporter_command;
     }
 
-# At long last, our hero returns and discovers:
-# ${temp_dir_name}/{Status}.{module_name}-{build_env_stuff}.{timestamp}.{pid}.rpt
-# ${temp_dir_name}/work/{timestamp}.{pid}/build.log
+    my $reporter_exit = check_exit( $cpanm_reporter_command );
+
+    # At long last, our hero returns and discovers:
+    # ${temp_dir_name}/{Status}.{module_name}-{build_env_stuff}.{timestamp}.{pid}.rpt
+    # ${temp_dir_name}/work/{timestamp}.{pid}/build.log
 
     my $test_results = Mojo::File->new($temp_dir_name)->list_tree;
 
-# Find the report file.  Extract the result (e.g., 'fail') and return with the filename.
+    # Find the report file.  Extract the result (e.g., 'fail') and return with the filename.
     my $report_file = $test_results->map(
         sub {
             /^${temp_dir_name}   # directory name at start
@@ -141,11 +124,13 @@ CONFIG
 
 # my $build_log = $test_results->grep(sub { /build.log$/ && !-l $_})->first; # ignore symlinks
     return {
-        success => 1,    # Completed, although possibly with errors
-        build_log => $build_file->slurp,   # Mojo::File->new($build_log)->slurp,
-        report    => $report_contents,
-        length($error) ? ( error => $error ) : (),
-        grade => $grade,
+            success => 1,    # Completed, although possibly with errors
+            build_log => $build_file->slurp,   # Mojo::File->new($build_log)->slurp,
+            report    => $report_contents,
+            length($error) ? ( error => $error ) : (),
+            grade => $grade,
+            test_exit => $test_exit,
+            reporter_exit => $reporter_exit,
     };
 }
 
@@ -153,7 +138,7 @@ sub check_exit {
 
 # Executes a system command.
 # Returns a descriptive error if something went wrong, or undef if everything's OK
-    my ( $what, $command ) = @_;
+    my ( $command ) = @_;
 
     my $signal_received;
     my $stderr;
@@ -169,7 +154,9 @@ sub check_exit {
         # this one won't work with apostrophes like above
         local $SIG{__DIE__} = sub { $signal_received = "Die" };
 
-        $stderr = Capture::Tiny::capture_stderr(sub { system($command ); });
+        my $exit_value;
+        $stderr = Capture::Tiny::capture_stderr(sub { $exit_value = system($command ); });
+        return $exit_value;
     };
 
     # undef from eval means Perl error
@@ -177,28 +164,28 @@ sub check_exit {
     # -1 means failure to execute the command at all
     # other values as below
 
-    # die "FIXME hey you , process the Stderr and look for lines with '!' in them?";
+    # Regrettably, the system() command returns 1 both in the case of a module which
+    # cannot be found, and in the case of a module which was tested and failed.
+    # The below should help decipher these cases.
 
-    print STDERR "*** $stderr ***\n" if defined $stderr;
-
-    if ( !defined $exit ) {
-        return "In command ($command), error: ($@)" . defined $signal_received
-          ? " with signal: $signal_received"
-          : '';
-    }
-    return undef if ( !$exit );
+    my $status = {};
+    $status->{stderr} = $stderr if defined $stderr;
+    $status->{command} = $command;
+    $status->{signal_received} = $signal_received if defined $signal_received;
+    return $status if ( !$exit );
 
     if ( $exit == -1 ) {
-        return "$what failed to execute: $!";
+        $status->{error} = "Failed to execute: $!";
+    } elsif ( $exit & 127 ) {
+        $status->{error} = sprintf(
+                                   "Child died with signal %d, %s coredump",
+                                   ( $exit & 127 ),
+                                   ( $exit & 128 ) ? 'with' : 'without'
+                                  );
+    } else {
+        $status->{error} = sprintf( "Child exited with value %d", $exit >> 8 );
     }
-    elsif ( $exit & 127 ) {
-        return sprintf(
-            "$what child died with signal %d, %s coredump",
-            ( $exit & 127 ),
-            ( $exit & 128 ) ? 'with' : 'without'
-        );
-    }
-    return sprintf( "$what child exited with value %d", $exit >> 8 );
+    return $status;
 }
 
 1;

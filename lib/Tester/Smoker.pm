@@ -481,39 +481,29 @@ package Tester::Smoker {
                           error_log => undef,   # retrying a failed job
                          );
 
+        # Choose a (Perlbrew) environment, or use the current (system, or other) Perl
         if (!defined $env_id) { # use currently installed version
-             # $^V  Perl version as 'v5.26.0'
              $env_id = $self->my_environment();
-             # NOTE: For possible later use.
-             #     ($build_log, $build_error_log, $grade) = CPAN::Wrapper::run_test(join('/',
-             #                                                                           $module_info->{author},
-             #                                                                           $module_specific));
-        } else {  # use Perlbrew
-            my $pb = eval { $self->sql->db->select(-from => 'environments',
-                                                   -where => {id => $env_id})->hashes->first; };
-            if (defined $pb) {
-                $perlbuild = $pb->first->{perlbrew};
-                # $perlbuild_id = $pb->first->{id};
-                $self->log->info("Using Perlbrew $perlbuild");
-            } else {
-                $self->log->error("Can't find Perlbrew environment with id=$env_id");
-                $minion_job->fail("Can't find Perlbrew environment with id=$env_id");
-                return 0;
-            }
+        }
+        # Describe that environment
+        my $pb = eval { $self->sql->db->select(-from => 'environments',
+                                               -where => {id => $env_id})->hashes->first; };
+        if (defined $pb) {
+            $self->log->info("Using Perl version ".$pb->{version}.", Perlbrew installation ".$pb->{perlbrew});
+        } else {
+            $self->log->error("Can't find environment (id=$env_id)");
+            $minion_job->fail("Can't find environment (id=$env_id)");
+            return 0;
         }
 
         my $result = TestModule::test_module({module => $module_info->{download_url},
                                               perl_release => $perlbuild
                                              });
-        # Save with a hash slice
-        # NB: build_error_log is actually the result log
-        ($build_log, $build_error_log, $grade) = @$result{qw(build_log report grade)};
-        # }
 
         # XXX: If the ->note() method is not called above, this fails?
-        $minion_job->note(build_log => $build_log);
-        $minion_job->note(result_log => $build_error_log);
-        $minion_job->note(grade => $grade);
+        foreach (qw(build_log report grade test_exit reporter_exit)) {
+            $minion_job->note($_ => $result->{$_});
+        }
         $self->log->info("Ran test for $tested_module");
         $minion_job->finish("Ran test for $tested_module");
 
@@ -521,9 +511,10 @@ package Tester::Smoker {
         $self->log->info("enqueueing Report");
         $minion_job->minion->enqueue(report => [{release => $module_info->{name},
                                                  release_id => $release_id,
-                                                 perlbuild => $perlbuild,
+                                                 # hash slice of environment:
+                                                 %{$pb}{qw(host perlbrew platform perl osname osvers)},
                                                  environment => $env_id,
-                                                 grade => $grade,
+                                                 grade => $result->{grade},
                                                  (defined $command) ? (command => $command) : (),
                                                  tested_module => $tested_module,
                                                  minion_job => $minion_job->info->{id},
