@@ -17,9 +17,10 @@ package Tester::Smoker {
     has 'sql' => sub { # Set during instantiation; or, create object
         my ($self) = @_;
         if (defined $self->database) {
-            my $db = Mojo::SQLite->new('sqlite:' . $self->database);
-            $db->abstract(SQL::Abstract::More->new());
-            return $db;
+          my $db = Mojo::SQLite->new('sqlite:' . $self->database);
+          # $db->options( {sqlite_see_if_its_a_number => 1} );
+          $db->abstract(SQL::Abstract::More->new());
+          return $db;
         }
     };
     has 'config';
@@ -98,8 +99,9 @@ package Tester::Smoker {
         if (defined $env && $env->size) {
             return $env->first->{id};
         } else {
-            return $self->sql->db->insert(-into => 'environments',
-                                          -values => $my_config)->last_insert_id;
+            return eval { $self->sql->db->insert(-into => 'environments',
+                                                 -values => $my_config)->last_insert_id;
+                      };
         }
     }
 
@@ -277,7 +279,6 @@ package Tester::Smoker {
     ################
 
     sub save_release_info {
-      # TODO: rename to save_release_info
         my ($self, $fields) = @_;
 
         # results from /release have a 'main_module';
@@ -285,7 +286,7 @@ package Tester::Smoker {
         my $module_name = eval { $fields->{module}->[0]->{name}; } // $fields->{main_module};
         return undef unless defined $module_name;
         my $id = eval {
-                $self->sql->db->query('INSERT INTO modules(name, version, released, author, download_url) '.
+                $self->sql->db->query('INSERT INTO releases(name, version, released, author, download_url) '.
                                       'VALUES (?,?,?,?,?)',
                                       $module_name,
                                       @{$fields}{qw(version date author download_url)})
@@ -431,9 +432,8 @@ package Tester::Smoker {
     use TestModule;
 
     sub test {
-        my $self = shift;
-        my $minion_job = shift;
-        my $args = {@_};
+        my ($self, $minion_job, $args) = @_;
+        return undef unless (ref $args) eq 'HASH';
 
         my $release_id = $args->{release_id};
         my $env_id = $args->{environment};
