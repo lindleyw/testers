@@ -67,6 +67,16 @@ Optional arguments to update are:
 
 ---
 
+To display enqueued jobs:
+
+    $ ./smoketest list
+
+To display completed jobs:
+
+    $ ./smoketest list finished
+
+---
+
 You can view the Minion AdminUI by starting a Mojolicious daemon:
 
     $ ./smoketest daemon &
