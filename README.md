@@ -12,6 +12,9 @@ results:
 
 http://blogs.perl.org/users/preaction/2017/07/cpan-testers-has-an-api.html
 
+This system uses Mojo and Minion to divide the testing into steps,
+each of which is performed and controlled by the Minion job queue.
+
 BACKGROUND:
 
 First, definitions. From the glossary of CPAN terminology, in brief we have:
@@ -39,11 +42,7 @@ REQUIREMENTS:
    $ cpanm Mojolicious Mojo::SQLite Minion Minion::Backend::SQLite\
      YAML App::cpanminus::reporter SQL::Abstract::More
 
-
-
-
-This uses Mojo and Minion to divide the testing into steps, each of
-which is performed and controlled by the Minion job queue.
+USAGE:
 
     $ chmod a+x smoketest
 
@@ -53,48 +52,28 @@ CPAN:
     $ ./smoketest rebuild
     $ ./smoketest update
 
-Example use from a locally saved copy of the package list:
+Optional arguments to update are:
 
-    $ perl smoketest update ~/Documents/02packages.details.txt
-
-to rebuild and reload database from a local file, or:
-
-    $ perl smoketest update
-
-to update from the default CPAN location (remote URL)
-
----
-(obsolete section)
-NOTE: The above step uses a YAML file which should contain (1) a regex
-that selects one or more modules by name; and (2) the setting
-disabled=1.  Alternately, if it says disabled=0 then the regex will
-*enable* the selected modules.
----
-
-TODO: Also allow loading local files and setting priority, as:
-
-    $ ./smoketest disable ~/mydisabled.yml --priority 10
+    -v          Verbose mode
+    --count=10  How many releases to retrieve from MetaCPAN
+    --distribution=Name   Specify a particular distribution to test
+    --dist=Name           (abbreviation)
+    --version=0.9         Which version of the above distribution to test
+    --release=Name-0.9    Combine distribution and version into full release name
+    --author=PREACTION    Specify an author
+    --start_date=2017-01-01  Specify a starting date
+    --end_date=2017-01-01  Specify an end date
+    --perl_version=5.26.1  Specify one or more Perl versions to test each release
 
 ---
 
-TODO: Look for '!' in the build log files, and in the event of a
-failure, report the remainder of that line (may not be at the
-beginning of the line) as the 'actual' error. -- 2017-11-21
+You can view the Minion AdminUI by starting a Mojolicious daemon:
 
-... we know that, e.g., SOAP::Lite fails with an error. Try a few.
+    $ ./smoketest daemon &
 
+The AdminUI is by default at http://localhost:3000
 
 ---
-
-TODO: Pick a better verb instead of the possibly misleading 'disable'
-
-Next, apply the enabled/disabled module lists in priority order:
-
-    $ ./smoketest apply
-
-To create a series of jobs which will test each enabled module:
-
-    $ ./smoketest create
 
 Then start a worker process to actually perform the tests:
 
@@ -119,6 +98,23 @@ or by pointing your browser at http://localhost:3000
     /job/:id           status of a given minion job
     del /job/:id       remove a minion job by id_number
     /jobs/stats        minion stats
+
+---
+(obsolete section) -- (CHANGE to explain building your own exclude file)
+NOTE: The above step uses a YAML file which should contain (1) a regex
+that selects one or more modules by name; and (2) the setting
+disabled=1.  Alternately, if it says disabled=0 then the regex will
+*enable* the selected modules.
+---
+
+TODO: Also allow loading local files and setting priority, as:
+
+    $ ./smoketest disable ~/mydisabled.yml --priority 10
+
+TODO: Pick a better verb instead of the possibly misleading 'disable'
+
+---
+
 
 
 ==========

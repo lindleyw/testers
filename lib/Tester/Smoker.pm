@@ -508,7 +508,8 @@ package Tester::Smoker {
         my $pb = eval { $self->sql->db->select(-from => 'environments',
                                                -where => {id => $env_id})->hashes->first; };
         if (defined $pb) {
-            $self->log->info("Using Perl version ".$pb->{version}.", Perlbrew installation ".$pb->{perlbrew});
+            my $perl_name = (defined $pb->{perlbrew}) ? ", Perlbrew installation ".$pb->{perlbrew} : '';
+            $self->log->info("Using Perl version ".$pb->{version}.$perl_name);
         } else {
             $self->log->error("Can't find environment (id=$env_id)");
             $minion_job->fail("Can't find environment (id=$env_id)");
