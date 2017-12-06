@@ -38,28 +38,39 @@ package main::Command::list {
     sub run {
         my ($self, @args) = @_;
 
+        my $job_state = $args[0] // 'inactive';    # 'finished' or 'failed' are useful
         my $jobs = $self->app->minion->backend->list_jobs(0, 50,  # offset, limit
-                                                          {state => $args[0] // 'inactive',    # 'finished' or 'failed' are useful
+                                                          {state => $job_state,
                                                            task => 'test',
                                                           }
                                                          );
-        print Mojo::Util::tablify [ [qw/Job Status Distribution Version Author/],
-                                    map {
-                                        my $release_id = eval{$_->{args}->[0]->{'release_id'}};
-                                        if (defined $release_id) {
-                                          my $info = $self->app->smoker->get_release_info({id => $release_id}) if defined $release_id;
-                                          if (!defined $info) {
-                                            ()
-                                          } else {
-                                            [ $_->{id}, $_->{state},
-                                              $info->first->@{qw/name version author/}
+        if ($job_state eq 'finished') {
+            print Mojo::Util::tablify [ [qw/Job Perl Result/],
+                                        map {
+                                            [ $_->{id}, $_->{notes}->{perl_version},
+                                              $_->{result}
                                             ]
-                                            }
-                                        } else {
-                                            ()
                                         }
-                                    }
-                                    @{$jobs->{jobs}} ];
+                                        @{$jobs->{jobs}} ];
+        } else {
+            print Mojo::Util::tablify [ [qw/Job Status Distribution Version Author/],
+                                        map {
+                                            my $release_id = eval{$_->{args}->[0]->{'release_id'}};
+                                            if (defined $release_id) {
+                                                my $info = $self->app->smoker->get_release_info({id => $release_id}) if defined $release_id;
+                                                if (!defined $info) {
+                                                    ()
+                                                } else {
+                                                    [ $_->{id}, $_->{state},
+                                                      $info->first->@{qw/name version author/}
+                                                    ]
+                                                }
+                                            } else {
+                                                ()
+                                            }
+                                        }
+                                        @{$jobs->{jobs}} ];
+        }
         return;
     }
 };
