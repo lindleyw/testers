@@ -205,7 +205,9 @@ package main::Command::update {
                                                                          q{AND json_extract(args,'$[0].environment')=?+0},
                                                                          $id, $v->{id})->hashes->first->{id}};
                               $skip //= eval{$self->app->sql->db->select(-from => 'tests',
-                                                                         -where => {release_id => $id})->hashes->first->{id}};
+                                                                         -where => {release_id => $id,
+                                                                                    environment_id => $v})
+                                             ->hashes->first->{id}};
                               $skip = " (skipping, already tested)" if defined $skip;
                               $self->app->log->info('  ... ' . $_->{name} . ' (Perl ' . $v->{perl} . ')'. ($skip//''))
                                 if $verbose;

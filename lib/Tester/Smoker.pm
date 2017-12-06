@@ -497,9 +497,8 @@ package Tester::Smoker {
         # XXX: Without the following, for some reason, Minion fails with
         # »DBD::SQLite::db prepare_cached failed: no such table: minion_jobs
         # at Minion/Backend/SQLite.pm line 287«
-        $minion_job->note(build_log => undef,   # Remove any previous logs remaining when
-                          error_log => undef,   # retrying a failed job
-                         );
+        # $minion_job->note(build_log => undef,   # Remove any previous logs remaining
+        #                  );
 
         # Choose a (Perlbrew) environment, or use the current (system, or other) Perl
         if (!defined $env_id) { # use currently installed version
