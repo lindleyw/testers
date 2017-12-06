@@ -11,7 +11,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 use strict;
 use warnings;
 
-my $verbose = 1;
+my $verbose = 0;
 
 use Capture::Tiny;
 
@@ -46,16 +46,13 @@ sub test_module {
     # Build test command
     my $cpanm_test_command = "cpanm --test-only $module";
     if (defined $perl_release) {   # prepend to use Perlbrew
-        $cpanm_test_command = "perlbrew exec  --with $perl_release " . $cpanm_test_command;
+        $cpanm_test_command = "perlbrew exec --with $perl_release " . $cpanm_test_command;
     }
 
-    # XXX: Maybe 2> error log?
-    # XXX: WAS: " > $temp_log 2>&1 ";
-    # TODO: Look for '!' in log files and report error
-
     say "  Shelling to: $cpanm_test_command" if ($verbose);
-
+    # Execute command; save status and output
     my $test_exit = check_exit( $cpanm_test_command );
+    my $elapsed_time = tv_interval(\@start_time, [gettimeofday]); # Elapsed time as floating seconds
 
     my $build_file = Mojo::File->new($temp_dir_name)->child('build.log');
 
@@ -93,7 +90,6 @@ CONFIG
     }
 
     my $reporter_exit = check_exit( $cpanm_reporter_command );
-    my $elapsed_time = tv_interval(\@start_time, [gettimeofday]); # Elapsed time as floating seconds
 
     # At long last, our hero returns and discovers:
     # ${temp_dir_name}/{Status}.{module_name}-{build_env_stuff}.{timestamp}.{pid}.rpt
