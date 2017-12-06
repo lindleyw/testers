@@ -6,7 +6,7 @@ use Mojo::File;
 use File::Temp;
 use Config;
 use CPAN::Testers::Common::Client::Config;
-use Time::HiRes qw(gettimeofday);
+use Time::HiRes qw(gettimeofday tv_interval);
 
 use strict;
 use warnings;
@@ -41,7 +41,7 @@ sub test_module {
     local $ENV{AUTOMATED_TESTING}      = 1;
 
     local $ENV{PERL_CPANM_HOME} = $temp_dir_name;
-    my ($secs, $msec) = gettimeofday();
+    my @start_time = gettimeofday();
 
     # Build test command
     my $cpanm_test_command = "cpanm --test-only $module";
@@ -93,6 +93,7 @@ CONFIG
     }
 
     my $reporter_exit = check_exit( $cpanm_reporter_command );
+    my $elapsed_time = tv_interval(\@start_time, [gettimeofday]); # Elapsed time as floating seconds
 
     # At long last, our hero returns and discovers:
     # ${temp_dir_name}/{Status}.{module_name}-{build_env_stuff}.{timestamp}.{pid}.rpt
@@ -131,6 +132,8 @@ CONFIG
             grade => $grade,
             test_exit => $test_exit,
             reporter_exit => $reporter_exit,
+            start_time => $start_time[0],
+            elapsed_time => $elapsed_time,
     };
 }
 

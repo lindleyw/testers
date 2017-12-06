@@ -87,19 +87,19 @@ CREATE UNIQUE INDEX environment_idx ON environments (host, perlbrew);
 
 CREATE TABLE tests (
                     id INTEGER PRIMARY KEY,
-                    dist_id INTEGER,          -- UUT [unit under test]
-                    version TEXT,             -- Version number as tested
-                    error TEXT,               -- Last or most-severe error encountered
+                    release_id INTEGER,       -- UUT [unit under test]
                     environment_id INTEGER,   -- replaces perl_build
-                    test_started TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- when testing began (was enqueued)
-                    test_finished TIMESTAMP,  -- replaces test_duration
-                    build_log TEXT,           -- the contents of the resulting build.log
-                    build_log_result TEXT,    -- parsed from the build log
-                    cpanm_report TEXT,        -- as submitted
-                    cpanm_report_sent TIMESTAMP,
-                    -- script_name TEXT,
-                    -- script_revision TEXT,    -- from CPAN
-                    -- script_date TIMESTAMP,   -- from CPAN
-                    FOREIGN KEY(dist_id) REFERENCES releasess(id),
+                    -- Data from TestModule:
+                    start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- when testing began (was enqueued)
+                    elapsed_time REAL,
+                    build_log TEXT,
+                    report TEXT,
+                    grade TEXT,
+                    test_command TEXT,
+                    test_error TEXT,
+                    reporter_command TEXT,
+                    reporter_error TEXT,
+                    report_sent TIMESTAMP,      -- When submitted to remote
+                    FOREIGN KEY(release_id) REFERENCES releases(id),
                     FOREIGN KEY(environment_id) REFERENCES environments(id)
 );

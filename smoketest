@@ -45,8 +45,8 @@ package main::Command::list {
                                                          );
         print Mojo::Util::tablify [ [qw/Job Status Distribution Version Author/],
                                     map {
-                                        if ( $_->{args}[0] eq 'release_id' ) {
-                                          my $release_id = $_->{args}[1];
+                                        my $release_id = eval{$_->{args}->[0]->{'release_id'}};
+                                        if (defined $release_id) {
                                           my $info = $self->app->smoker->get_release_info({id => $release_id}) if defined $release_id;
                                           if (!defined $info) {
                                             ()
@@ -214,15 +214,21 @@ package main::Command::dist {
                             foreach my $v (@perl_test_versions) {
                               # XXX: ?+0 to work around DBD::SQLite issue; c.f.
                               # https://metacpan.org/pod/DBD::SQLite#Add-zero-to-make-it-a-number
+
                               my $skip = eval{$self->app->sql->db->query(q{SELECT id FROM minion_jobs WHERE }.
-                                                                         q{(task='test' or task='report') AND }.
+                                                                         q{(task='test') AND }.
                                                                          q{json_extract(args,'$[0].release_id')=?+0 }.
                                                                          q{AND json_extract(args,'$[0].environment')=?+0},
                                                                          $id, $v->{id})->hashes->first->{id}};
-                              $skip = " (already tested, job_id=$skip)" if defined $skip;
+                              $skip //= eval{$self->app->sql->db->select(-from => 'tests',
+                                                                         -where => {release_id => $id})->hashes->first->{id}};
+                              $skip = " (skipping, already tested)" if defined $skip;
                               $self->app->log->info('  ... ' . $_->{name} . ' (Perl ' . $v->{perl} . ')'. ($skip//''))
                                 if $verbose;
-                              $self->app->minion->enqueue(test => [{release_id => $id, environment => $v->{id}}], {notes => {module_info => $_, perl_version => $v->{perl}}});
+                              if (!defined $skip) {
+                                  $self->app->minion->enqueue(test => [{release_id => $id, environment => $v->{id}}],
+                                                              {notes => {module_info => $_, perl_version => $v->{perl}}});
+                              }
                             }
                           });
         }

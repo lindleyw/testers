@@ -77,7 +77,7 @@ package Tester::Smoker {
             warn 'Note: Write-ahead mode not enabled';
         }
         $self->sql->db->query('PRAGMA foreign_keys=1;');
-        
+
         return $self;
     }
 
@@ -158,7 +158,7 @@ package Tester::Smoker {
     }
 
     sub load_regexes {
-        my ($self) = @_; 
+        my ($self) = @_;
 
         # For each available enable/disable list, prepare to apply in priority order
         my $regex_list = eval{
@@ -176,7 +176,7 @@ package Tester::Smoker {
         # Apply, in priority order, all defined regular expressions
         # which could enable or disable the selected module.  Set
         # disabled_by in the module database accordingly.
-        my ($self, $module_id) = @_; 
+        my ($self, $module_id) = @_;
 
         # For each available enable/disable list, prepare to apply in priority order
         my $regex_list = $self->load_regexes;
@@ -377,7 +377,7 @@ package Tester::Smoker {
       # Run a test on a given release (module+version), on a given
       # version of Perl
       my ($self, $mod_info) = @_;
-    
+
       my $release_id = $mod_info->{dist_id} // eval {
         # Because of the index `dist_idx`, choosing the most-recent
         # distribution by name will always give us the latest version
@@ -429,6 +429,27 @@ package Tester::Smoker {
     ###
     ################################################################
 
+    sub save_test {
+        my ($self, $info) = @_;
+
+        # ; $DB::single = 1;
+        my $test_id = eval { $self->sql->db->insert(-into => 'tests',
+                                                    -values => {%{$info}{
+                                                        qw(release_id environment_id
+                                                           start_time elapsed_time
+                                                           build_log report grade
+                                                         )},
+                                                                test_command => $info->{test_exit}->{command},
+                                                                test_error => $info->{test_exit}->{stderr},
+                                                                reporter_command => $info->{reporter_exit}->{command},
+                                                                reporter_error => $info->{reporter_exit}->{stderr},
+                                                               },
+                                                    )->last_insert_id; };
+        return $test_id;
+    }
+
+    ###
+
     use TestModule;
 
     sub test {
@@ -469,7 +490,6 @@ package Tester::Smoker {
         local $ENV{AUTOMATED_TESTING}      = 1;
 
         # Test the specific version we asked for
-        my $tested_module = Mojo::URL->new($module_info->{download_url});
         my $command;
 
         my ($build_log, $build_error_log);
@@ -500,28 +520,37 @@ package Tester::Smoker {
                                               perl_release => $perlbuild
                                              });
 
-        # XXX: If the ->note() method is not called above, this fails?
-        foreach (qw(build_log report grade test_exit reporter_exit)) {
-            $minion_job->note($_ => $result->{$_});
-        }
-        $self->log->info("Ran test for $tested_module");
-        $minion_job->finish("Ran test for $tested_module");
+        my $log_message = 'Test complete, '. $module_info->{name} . ' -> grade='.$result->{grade}.', elapsed time='. $result->{elapsed_time};
+        $self->log->info($log_message);
+        $minion_job->finish($log_message);
 
         # Enqueue the report to be processed and sent later
         $self->log->info("enqueueing Report");
-        $minion_job->minion->enqueue(report => [{release => $module_info->{name},
+
+        my $test_id = $self->save_test({release => $module_info->{name},
+                                        release_id => $release_id,
+                                        # hash slice of environment:
+                                        %{$pb}{qw(host perlbrew platform perl osname osvers)},
+                                        # and of result
+                                        %{$result}{qw(build_log report grade test_exit reporter_exit
+                                                    start_time elapsed_time)},
+                                        environment_id => $env_id,
+                                        # tested_module => $tested_module,
+                                        # minion_job => $minion_job->info->{id},
+                                       });
+
+        # XXX: If the ->note() method is not called above, these fail?
+        $minion_job->note(test_id => $test_id);
+        $minion_job->note(command => $command) if defined $command;
+
+        my $test_error = $result->{test_exit}->{stderr};
+        my @show_error = (defined $test_error) ? (test_error => $test_error) : ();
+        $minion_job->minion->enqueue(report => [{test_id => $test_id,
                                                  release_id => $release_id,
-                                                 # hash slice of environment:
-                                                 %{$pb}{qw(host perlbrew platform perl osname osvers)},
-                                                 environment => $env_id,
-                                                 grade => $result->{grade},
-                                                 (defined $command) ? (command => $command) : (),
-                                                 tested_module => $tested_module,
-                                                 minion_job => $minion_job->info->{id},
-                                                }
-                                               ],
-                                     { parents => [$minion_job->info->{id}],
-                                     });
+                                                 %{$result}{qw(grade elapsed_time)},
+                                                 @show_error,
+                                                }],
+                                     {parents => [$minion_job->info->{id}]});
         $self->log->info("Report enqueued");
     }
 
