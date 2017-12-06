@@ -286,11 +286,13 @@ package Tester::Smoker {
         my $module_name = eval { $fields->{module}->[0]->{name}; } // $fields->{main_module};
         return undef unless defined $module_name;
         my $id = eval {
-                $self->sql->db->query('INSERT INTO releases(name, version, released, author, download_url) '.
-                                      'VALUES (?,?,?,?,?)',
-                                      $module_name,
-                                      @{$fields}{qw(version date author download_url)})
-                ->last_insert_id;
+            # Database constraint will throw exception if attempt to
+            # duplicate (name,version), so blithely we:
+            $self->sql->db->query('INSERT INTO releases(name, version, released, author, download_url) '.
+                                  'VALUES (?,?,?,?,?)',
+                                  $module_name,
+                                  @{$fields}{qw(version date author download_url)})
+            ->last_insert_id;
             };
         return $id;
     }
