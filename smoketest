@@ -113,25 +113,6 @@ Options:
 
 ################################################################
 
-package main::Command::update {
-    use Mojo::Base 'Mojolicious::Command';
-
-    has 'description' => "Retrieves and saves CPAN's list of recently-updated modules";
-
-    sub run {
-        my ($self, @args) = @_;
-
-        my $updated_releases = $self->app->smoker->get_recent(@args);
-        if ($self->app->smoker->check_regex(release_id => $updated_releases)) {
-            $self->app->log->info("modules updated OK");
-        } else {
-            $self->app->log->error("could not update module list");
-        }
-    }
-};
-
-################
-
 package main::Command::reload {
     use Mojo::Base 'Mojolicious::Command';
 
@@ -148,14 +129,13 @@ package main::Command::reload {
     }
 };
 
-
 ################################################################
 
-package main::Command::dist {
+package main::Command::update {
     use Mojo::Base 'Mojolicious::Command';
     use Mojo::Util qw(getopt);
 
-    has 'description' => 'Enqueues tests for CPAN distributions';
+    has 'description' => 'Retrieves distribution info from MetaCPAN and enqueues tests';
 
     sub run {
         my ($self, @args) = @_;

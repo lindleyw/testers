@@ -33,8 +33,12 @@ Source: http://neilb.org/2015/09/05/cpan-glossary.html
 
 REQUIREMENTS:
 
+   # For Debian/Ubuntu:
+   $ sudo apt install sqlite3 libssl-dev zlib1g-dev
+
    $ cpanm Mojolicious Mojo::SQLite Minion Minion::Backend::SQLite\
      YAML App::cpanminus::reporter SQL::Abstract::More
+
 
 
 
