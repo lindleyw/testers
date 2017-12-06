@@ -172,7 +172,11 @@ package main::Command::update {
         my @perl_test_versions;
         foreach my $v (@perl_versions) {
             my $vv = $self->app->smoker->get_environment({perl => $v});
-            push @perl_test_versions, $vv if defined $vv;
+            if (defined $vv) {
+                push @perl_test_versions, $vv
+            } else {
+                die "Perl version ($v) not found";
+            }
         }
         # Default to current environment
         if (!scalar @perl_test_versions) {
