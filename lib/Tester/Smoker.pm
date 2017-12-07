@@ -319,7 +319,8 @@ package Tester::Smoker {
                                 $_->{id} = eval {$self->sql->db->insert(-into => 'releases',
                                                                         -values => {%$_{qw(name version
                                                                                            released author
-                                                                                           download_url)}},
+                                                                                           download_url)},
+                                                                                   distribution => $_->{main_module}},
                                                                        )->last_insert_id;
                                              };
                                 if (!defined $_->{id}) {  # Probably already existed
@@ -434,17 +435,21 @@ package Tester::Smoker {
     sub save_test {
         my ($self, $info) = @_;
 
-        # ; $DB::single = 1;
+        my $command_info;
+        foreach (qw{test reporter}) {
+            $command_info->{$_ . '_command'} = $info->{$_.'_exit'}->{command};
+            $command_info->{$_ . '_error'}= join("\n\n",grep {defined}            # Condense:
+                                                 ( $info->{$_.'_exit'}->{stderr}, # full error log
+                                                   $info->{$_.'_exit'}->{error},  # explanation of process exit code
+                                                 ));
+        }
         my $test_id = eval { $self->sql->db->insert(-into => 'tests',
                                                     -values => {%{$info}{
                                                         qw(release_id environment_id
                                                            start_time elapsed_time
                                                            build_log report grade
                                                          )},
-                                                                test_command => $info->{test_exit}->{command},
-                                                                test_error => $info->{test_exit}->{stderr},
-                                                                reporter_command => $info->{reporter_exit}->{command},
-                                                                reporter_error => $info->{reporter_exit}->{stderr},
+                                                                %{$command_info}
                                                                },
                                                     )->last_insert_id; };
         return $test_id;
@@ -496,12 +501,6 @@ package Tester::Smoker {
 
         my ($build_log, $build_error_log);
 
-        # XXX: Without the following, for some reason, Minion fails with
-        # »DBD::SQLite::db prepare_cached failed: no such table: minion_jobs
-        # at Minion/Backend/SQLite.pm line 287«
-        # $minion_job->note(build_log => undef,   # Remove any previous logs remaining
-        #                  );
-
         # Choose a (Perlbrew) environment, or use the current (system, or other) Perl
         if (!defined $env_id) { # use currently installed version
              $env_id = $self->my_environment();
@@ -509,22 +508,28 @@ package Tester::Smoker {
         # Describe that environment
         my $pb = eval { $self->sql->db->select(-from => 'environments',
                                                -where => {id => $env_id})->hashes->first; };
-        if (defined $pb) {
-            my $perl_name = (defined $pb->{perlbrew}) ? ", Perlbrew installation ".$pb->{perlbrew} : '';
-            $self->log->info("Using Perl version ".$pb->{version}.$perl_name);
-        } else {
+        if (!defined $pb) {
             $self->log->error("Can't find environment (id=$env_id)");
             $minion_job->fail("Can't find environment (id=$env_id)");
             return 0;
+        }
+        {
+            my $log_msg = "Using Perl version ".$pb->{perl};
+            $log_msg .= ", Perlbrew installation ".$pb->{perlbrew} if defined $pb->{perlbrew};
+            $self->log->info($log_msg);
         }
 
         my $result = TestModule::test_module({module => $module_info->{download_url},
                                               perl_release => $perlbuild
                                              });
-
-        my $log_message = 'Test complete, '. $module_info->{name} . ' -> grade='.$result->{grade}.', elapsed time='. $result->{elapsed_time};
-        $self->log->info($log_message);
-        $minion_job->finish($log_message);
+        {
+            my $log_msg = 'Test complete, '. $module_info->{name} .' ->';
+            $log_msg .= 'grade='.$result->{grade} if defined $result->{grade};
+            $log_msg .= 'elapsed time='. $result->{elapsed_time} if defined $result->{elapsed_time};
+            $log_msg .= '...Error='.$result->{test_exit}->{error} if defined $result->{test_exit}->{error};
+            $self->log->info($log_msg);
+            $minion_job->finish($log_msg);
+        }
 
         # Enqueue the report to be processed and sent later
         $self->log->info("enqueueing Report");
@@ -541,7 +546,6 @@ package Tester::Smoker {
                                         # minion_job => $minion_job->info->{id},
                                        });
 
-        # XXX: If the ->note() method is not called above, these fail?
         $minion_job->note(test_id => $test_id);
         $minion_job->note(command => $command) if defined $command;
 

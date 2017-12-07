@@ -103,3 +103,7 @@ CREATE TABLE tests (
                     FOREIGN KEY(release_id) REFERENCES releases(id),
                     FOREIGN KEY(environment_id) REFERENCES environments(id)
 );
+
+-- 2 up
+
+ALTER TABLE releases ADD COLUMN distribution TEXT;

@@ -198,73 +198,36 @@ package main::Command::update {
           $self->app->log->info('Enqueueing ' . $releases->size . ' releases') if $verbose;
           $releases->each(sub {
                             my $id = $_->{id};
-                            # TODO:
-                            # Get distribution name
-                            # unless $force_test --
-                            #  - Check against disabled list
-                            #  - Check against cpan/cpanm already-tested list
-                            #  - Check against *our* already-tested database
-                            # Enqueue Minion testing jobs
+                            # TODO: Move below into separate routine
                             # TODO: Probably move enqueue() calls into Smoker
                             foreach my $v (@perl_test_versions) {
-                              # XXX: ?+0 to work around DBD::SQLite issue; c.f.
-                              # https://metacpan.org/pod/DBD::SQLite#Add-zero-to-make-it-a-number
-
-                              my $skip = eval{$self->app->sql->db->query(q{SELECT id FROM minion_jobs WHERE }.
-                                                                         q{(task='test') AND }.
-                                                                         q{json_extract(args,'$[0].release_id')=?+0 }.
-                                                                         q{AND json_extract(args,'$[0].environment')=?+0},
-                                                                         $id, $v->{id})->hashes->first->{id}};
-                              $skip //= eval{$self->app->sql->db->select(-from => 'tests',
-                                                                         -where => {release_id => $id,
-                                                                                    environment_id => $v})
-                                             ->hashes->first->{id}};
-                              $skip = " (skipping, already tested)" if defined $skip;
-                              $self->app->log->info('  ... ' . $_->{name} . ' (Perl ' . $v->{perl} . ')'. ($skip//''))
-                                if $verbose;
-                              if (!defined $skip) {
-                                  $self->app->minion->enqueue(test => [{release_id => $id, environment => $v->{id}}],
-                                                              {notes => {module_info => $_, perl_version => $v->{perl}}});
-                              }
+                                # XXX: ?+0 to work around DBD::SQLite issue; c.f.
+                                # https://metacpan.org/pod/DBD::SQLite#Add-zero-to-make-it-a-number
+                                my $skip;
+                                if (!defined $force_test) {
+                                    $skip = eval{$self->app->sql->db->query(q{SELECT id FROM minion_jobs WHERE }.
+                                                                            q{(task='test') AND }.
+                                                                            q{json_extract(args,'$[0].release_id')=?+0 }.
+                                                                            q{AND json_extract(args,'$[0].environment')=?+0},
+                                                                            $id, $v->{id})->hashes->first->{id}};
+                                    $skip //= eval{$self->app->sql->db->select(-from => 'tests',
+                                                                               -where => {release_id => $id,
+                                                                                          environment_id => $v})
+                                                   ->hashes->first->{id}};
+                                    $skip = " (skipping, already tested)" if defined $skip;
+                                }
+                                $self->app->log->info('  ... ' . $_->{name} . ' (Perl ' . $v->{perl} . ')'. ($skip//''))
+                                  if $verbose;
+                                if (!defined $skip) {
+                                    $self->app->minion->enqueue(test => [{release_id => $id, environment => $v->{id}}],
+                                                                {notes => {module_info => $_, perl_version => $v->{perl}}});
+                                }
                             }
-                          });
-        }
+                        });
+      }
 
     }
 };
-
-################################################################
-
-# Apply the enable/disable list(s)
-#
-
-# package main::Command::apply {
-#     use Mojo::Base 'Mojolicious::Command';
-
-#     has 'description' => '';
-
-#     sub run {
-#         my ($self, @args) = @_;
-
-#         return $self->app->smoker->apply(@args);
-#     }
-# }
-
-# ################################################################
-
-# # Create Test jobs for one module, or for all enabled modules
-# #
-
-# package main::Command::create {
-#     use Mojo::Base 'Mojolicious::Command';
-
-#     has 'description' => '';
-
-#     sub run {
-#         my ($self, @selected_modules) = @_;
-#     }
-    
-# };
 
 ################################################################
 
@@ -358,7 +321,7 @@ app->minion->add_task( test => sub { my ($job, @args) = @_;
                                      }
                                  } );
 
-get '/modules' => sub {
+get '/releases' => sub {
     my $self = shift;
 
     my $result = eval { $self->db->query('SELECT COUNT(*) AS count FROM releases')->hashes->first; };
@@ -369,41 +332,80 @@ get '/modules' => sub {
     }
 };
 
-get '/module/:modname' => sub {
+get '/release/#release' => sub {   # octothorpe placeholder because releases contain '.'
     my $self = shift;
 
-    my $result = eval { $self->db->query('SELECT * FROM releasess WHERE name=?',
-                                         $self->stash('modname'))->hashes->first; };
+    # /release/Mojolicious-7.58
+    my $result = eval { $self->db->query('SELECT * FROM releases WHERE name=?',
+                                         $self->stash('release'))->hashes->first; };
     if (defined $result) {
         $self->render(json => $result);
     } else {
-        $self->render(json => {error => 'Module not found'});
+        $self->render(json => {error => 'Release not found'});
     }
 };
 
-get '/tests/:modname' => sub {
+get '/distribution/:dist' => sub {
     my $self = shift;
 
-    my $result = eval { $self->db->query('SELECT * FROM tests WHERE dist_id=(SELECT id FROM releases WHERE name=?)',
-                                         $self->stash('modname'))->hashes; };
+    # /distribution/Mojolicious
+    my $result = eval { $self->db->query('SELECT * FROM releases WHERE distribution=?',
+                                         $self->stash('dist'))->hashes; };
     if (defined $result) {
         $self->render(json => $result);
     } else {
-        $self->render(json => {error => 'No tests have been run, or Module not found'});
+        $self->render(json => {error => 'Distribution not found'});
     }
 };
 
-# app->minion->add_task( update => sub { my ($job, @args) = @_;
-#                                        my ($result, @result_args) = $job->app->smoker->update(@args);
-#                                        if ($result eq 'success') {
-#                                            $job->finished(@result_args);
-#                                        } elsif ($result eq 'error') {
-#                                            $job->fail(@result_args);
-#                                        } else {
-#                                            # TODO: Better define why/when this can happen
-#                                            # $job->retry(@result_args);
-#                                        }
-#                                    } );
+get '/author/:auth' => sub {
+    my $self = shift;
+
+    # /distribution/Mojolicious
+    my $result = eval { $self->db->query('SELECT * FROM releases WHERE author=?',
+                                         $self->stash('auth'))->hashes; };
+    if (defined $result) {
+        $self->render(json => $result);
+    } else {
+        $self->render(json => {error => 'Distribution not found'});
+    }
+};
+
+get '/tests/#release' => sub {
+    my $self = shift;
+
+    my $result = eval { $self->db->query('SELECT * FROM tests WHERE release_id in (SELECT id FROM releases WHERE name=?)',
+                                         $self->stash('release'))->hashes; };
+    if (defined $result) {
+        $self->render(json => $result);
+    } else {
+        $self->render(json => {error => 'No tests have been run, or Distribution not found'});
+    }
+};
+
+get '/tests/distribution/:distribution' => sub {
+    my $self = shift;
+
+    my $result = eval { $self->db->query('SELECT * FROM tests WHERE release_id in (SELECT id FROM releases WHERE distribution=?)',
+                                         $self->stash('distribution'))->hashes; };
+    if (defined $result) {
+        $self->render(json => $result);
+    } else {
+        $self->render(json => {error => 'No tests have been run, or Distribution not found'});
+    }
+};
+
+get '/test/:id' => sub {
+    my $self = shift;
+
+    my $result = eval { $self->db->query('SELECT * FROM tests WHERE id=?',
+                                         $self->stash('id'))->hashes; };
+    if (defined $result) {
+        $self->render(json => $result);
+    } else {
+        $self->render(json => {error => 'Test not found'});
+    }
+};
 
 app->minion->add_task ( update => sub { my ($job, @args) = @_;
                                                 my $results = $job->app->smoker->get_recent(@args);
@@ -427,17 +429,6 @@ get '/update/*uri' => sub {
     my ($self) = @_;
     my $id = $self->minion->enqueue('update' => [$self->stash('uri')], {priority => 0});
     $self->render(json => {job => {task => 'update', id => $id}});
-};
-
-app->minion->add_task( apply => sub { my ($job, @args) = @_;
-                                      apply( $job->app, @args);
-                                      # probably call $job->finished($message) or $job->fail($message)
-                                   } );
-
-get '/apply' => sub {
-    my ($self) = @_;
-    my $id = $self->minion->enqueue('apply', {priority => 0});
-    $self->render(json => {job => {task => 'apply', id => $id}});
 };
 
 get '/job/:id' => sub {
