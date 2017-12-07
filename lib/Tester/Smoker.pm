@@ -524,9 +524,9 @@ package Tester::Smoker {
                                              });
         {
             my $log_msg = 'Test complete, '. $module_info->{name} .' ->';
-            $log_msg .= 'grade='.$result->{grade} if defined $result->{grade};
-            $log_msg .= 'elapsed time='. $result->{elapsed_time} if defined $result->{elapsed_time};
-            $log_msg .= '...Error='.$result->{test_exit}->{error} if defined $result->{test_exit}->{error};
+            $log_msg .= ' grade='.$result->{grade} if defined $result->{grade};
+            $log_msg .= ' elapsed time='. $result->{elapsed_time} if defined $result->{elapsed_time};
+            $log_msg .= ' ...Error='.$result->{test_exit}->{error} if defined $result->{test_exit}->{error};
             $self->log->info($log_msg);
             $minion_job->finish($log_msg);
         }
@@ -572,28 +572,6 @@ package Tester::Smoker {
         } else {
             $self->log->info(sprintf("$what child exited with value %d\n", $exit >> 8));
         }
-    }
-
-    ################################################################
-
-    sub apply {
-        my ($self, $recipe_name) = @_;
-
-        my @recipe_steps = eval { @{$self->config->{apply}->
-                                    {$recipe_name // 'recent'} }
-                              };
-
-        # TODO: How do we choose the Perl version?
-
-        foreach my $step (pairs( @recipe_steps)) {
-            my ( $action, $args ) = @$step;
-            if ($self->can($action)) {
-                # Array refs [] get expanded to ordinary argument list; else verbatim
-                # $module_group->$action(ref $args eq 'ARRAY' ? @{$args} : $args);
-                # TODO: Need to handle errors and bail out
-            }
-        }
-        # use $module_group->selected() ...?
     }
 
 };

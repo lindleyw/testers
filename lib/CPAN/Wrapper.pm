@@ -347,9 +347,11 @@ package CPAN::Wrapper {
         my @want_versions;
         # Default to status=latest, unless we specify versions
         @want_versions = _item_list(['version', {term => {'status' => 'latest'}}], $args->{version});
-        # Omit the version field if full release names are given
-        if (defined $args->{name} && scalar @{$args->{name}}) {
-          @want_versions = ();
+        # Omit the version field if distributions or full release names are given
+        foreach (qw{name main_module}) {
+            if (defined $args->{$_} && scalar @{$args->{$_}}) {
+                @want_versions = ();
+            }
         }
         my $req = { 'size' => $args->{count} // 10,
                     'fields' => [qw(name version date author download_url main_module)],  # could add:  provides
