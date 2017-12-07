@@ -44,6 +44,7 @@ package main::Command::list {
                                                            task => 'test',
                                                           }
                                                          );
+	return unless scalar @{$jobs};
         if ($job_state eq 'finished') {
             print Mojo::Util::tablify [ [qw/Job Perl Result/],
                                         map {
