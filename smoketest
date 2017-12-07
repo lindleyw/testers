@@ -51,7 +51,7 @@ package main::Command::list {
                                               $_->{result}
                                             ]
                                         }
-                                        @{$jobs}->{jobs} ];
+                                        @{$jobs->{jobs}} ];
         } else {
             print Mojo::Util::tablify [ [qw/Job Status Distribution Version Author/],
                                         map {

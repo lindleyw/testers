@@ -344,16 +344,28 @@ package CPAN::Wrapper {
         # NOTE: For a Release,
         # 'main_module' (e.g., 'Mojolicious') is the name of a Distribution
         # 'name'  (e.g., 'Mojolicious-7.46') is the full release name+version.
-        my @want_versions;
         # Default to status=latest, unless we specify versions
-        @want_versions = _item_list(['version', {term => {'status' => 'latest'}}], $args->{version});
-        # Omit the version field if distributions or full release names are given
-        foreach (qw{name main_module}) {
-            if (defined $args->{$_} && scalar @{$args->{$_}}) {
-                @want_versions = ();
+        my @want_versions = _item_list(['version', {term => {'status' => 'latest'}}], $args->{version});
+        my @want_count = ( size => $args->{count} // 10);
+        
+        # Cases:
+        if (defined $args->{name} && scalar @{$args->{name}}) {
+            #   I. specific distribution name with version
+            @want_versions = ();    # Version in name overrides others; also omit status=latest
+            @want_count    = ();    # Use endpoint's default
+            # @want_count = (size => scalar @{$args->{name}});   # exactly that many
+        } elsif (defined $args->{main_module} && scalar @{$args->{main_module}}) {
+            #   II. a distribution name
+            #
+            if (scalar @{$args->{version}}) {  # Get specific version(s). Omit count.
+                @want_count = ();
+            } else {
+                @want_versions = ();           # Default to the one latest version
+                @want_count = (size => $args->{count} // scalar @{$args->{main_module}});
             }
         }
-        my $req = { 'size' => $args->{count} // 10,
+
+        my $req = { @want_count,
                     'fields' => [qw(name version date author download_url main_module)],  # could add:  provides
                     'filter' => {'and' => [_item_list('main_module', $args->{main_module}), # e.g., 'Mojolicious'
                                            _item_list('name', $args->{name}),     # e.g., 'Mojolicious-7.46'
