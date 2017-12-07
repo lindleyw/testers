@@ -36,11 +36,11 @@ Source: http://neilb.org/2015/09/05/cpan-glossary.html
 
 REQUIREMENTS:
 
-   # For Debian/Ubuntu:
-   $ sudo apt install sqlite3 libssl-dev zlib1g-dev
+    # For Debian/Ubuntu:
+    $ sudo apt install sqlite3 libssl-dev zlib1g-dev
 
-   $ cpanm Mojolicious Mojo::SQLite Minion Minion::Backend::SQLite\
-     YAML App::cpanminus::reporter SQL::Abstract::More
+    $ cpanm Mojolicious Mojo::SQLite Minion Minion::Backend::SQLite\
+      YAML App::cpanminus::reporter SQL::Abstract::More
 
 USAGE:
 
@@ -54,16 +54,25 @@ CPAN:
 
 Optional arguments to update are:
 
-    -v          Verbose mode
-    --count=10  How many releases to retrieve from MetaCPAN
+    -v                    Verbose mode
+    --count=10            How many releases to retrieve from MetaCPAN
     --distribution=Name   Specify a particular distribution to test
-    --dist=Name           (abbreviation)
+    --dist=Name           (abbreviation for --distribution)
     --version=0.9         Which version of the above distribution to test
-    --release=Name-0.9    Combine distribution and version into full release name
+    --release=Name-0.9    Combine distribution and version into
+                          full release name
     --author=PREACTION    Specify an author
     --start_date=2017-01-01  Specify a starting date
-    --end_date=2017-01-01  Specify an end date
-    --perl_version=5.26.1  Specify one or more Perl versions to test each release
+    --end_date=2017-01-01 Specify an end date
+    --perl_version=5.26.1 Specify one or more Perl versions
+                          to test each release
+    --force               Force testing even of releases
+                          already tested or queued
+    --notest              Do not enqueue any test jobs,
+                          just add releases to database
+
+Unless --distribution or --release is specified, only the latest
+versions of a given distribution will be retrieved.
 
 ---
 

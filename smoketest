@@ -154,6 +154,7 @@ package main::Command::update {
           'v|verbose' => \my $verbose,   # Note abbrev, versus -version below
           'count=i' => \my $count,
           'force'   => \my $force_test,
+          'notest'  => \my $skip_tests,
           'distribution|distro=s' => \my @dists,
           'version=s' => \my @versions,  # one 'Release' is a 'Distribution-Version' combination,
           'release=s' => \my @releases,  # so generally either specify release or distro(+version).
@@ -194,7 +195,7 @@ package main::Command::update {
           @perl_test_versions = $self->app->smoker->get_environment({id => $self->app->smoker->my_environment()});
         }
         # Enqueue tests for each of those releases.
-        if (defined $releases) {
+        if (defined $releases && !$skip_tests) {
           $self->app->log->info('Enqueueing ' . $releases->size . ' releases') if $verbose;
           $releases->each(sub {
                             my $id = $_->{id};
