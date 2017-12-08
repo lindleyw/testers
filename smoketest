@@ -8,6 +8,7 @@ use Mojo::File;
 use Mojo::UserAgent;
 use Mojo::DOM;
 use List::Util qw(pairs);
+use Email::Address;
 use v5.22;
 use strict;
 use warnings;
@@ -380,8 +381,10 @@ get '/report/:id' => sub {
         $self->render(json => {error => 'Report not found'});
         return undef;
     }
-    ; $DB::single = 1;
     my ($release_name, $release_version) = $test->{name} =~ m{^(.+)-([^-]+)};
+    my $email_from = (Email::Address->parse($self->smoker->tester->config->email_from))[0];
+    my ($submitter_email, $submitter_name) = (defined $email_from) ?
+         ( $email_from->address, $email_from->name ) : ('NOT CONFIGURED!','NOT CONFIGURED!');
     my $result = { environment => { language => { name => 'Perl 5',
                                                   version => $test->{perl},
                                                   archname => $test->{archname},
@@ -390,8 +393,8 @@ get '/report/:id' => sub {
                                                 osversion => $test->{osvers},
                                               },
                                   },
-                   reporter => { email => $self->smoker->tester->config->email_from,
-                                 name => 'FIXME',
+                   reporter => { email => $submitter_email,
+                                 name =>  $submitter_name,
                                },
                    distribution => { name => $release_name,
                                      version => $test->{version},  # should be same as $release_version
