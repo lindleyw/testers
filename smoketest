@@ -372,6 +372,38 @@ get '/author/:auth' => sub {
     }
 };
 
+get '/report/:id' => sub {
+    my $self = shift;
+
+    my $test = $self->smoker->report_for($self->stash('id'));
+    unless (defined $test && defined ($test = $test->first)) {
+        $self->render(json => {error => 'Report not found'});
+        return undef;
+    }
+    ; $DB::single = 1;
+    my ($release_name, $release_version) = $test->{name} =~ m{^(.+)-([^-]+)};
+    my $result = { environment => { language => { name => 'Perl 5',
+                                                  version => $test->{perl},
+                                                  archname => $test->{archname},
+                                                },
+                                    system => { osname => $test->{osname},
+                                                osversion => $test->{osvers},
+                                              },
+                                  },
+                   reporter => { email => $self->smoker->tester->config->email_from,
+                                 name => 'FIXME',
+                               },
+                   distribution => { name => $release_name,
+                                     version => $test->{version},  # should be same as $release_version
+                                   },
+                   result => { grade => $test->{grade},
+                               output => $test->{report},
+                               # XXX: Question: Do we want $test->{build_log} ?
+                             },
+                   };
+    $self->render(json => $result);
+};
+
 get '/tests/#release' => sub {
     my $self = shift;
 

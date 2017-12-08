@@ -28,6 +28,11 @@ package Tester::Smoker {
                          # CPAN, to remind us to fetch and save the
                          # appropriate new regex
 
+    use TestModule;
+    has 'tester' => sub {
+        TestModule->new;
+    };
+
     use CPAN::Wrapper;
     has 'cpan' => sub {
         my ($self) = @_;
@@ -457,8 +462,6 @@ package Tester::Smoker {
 
     ###
 
-    use TestModule;
-
     sub test {
         my ($self, $minion_job, $args) = @_;
         return undef unless (ref $args) eq 'HASH';
@@ -519,7 +522,7 @@ package Tester::Smoker {
             $self->log->info($log_msg);
         }
 
-        my $result = TestModule::test_module({module => $module_info->{download_url},
+        my $result = $self->tester->run({module => $module_info->{download_url},
                                               perl_release => $perlbuild
                                              });
         {
@@ -573,6 +576,22 @@ package Tester::Smoker {
             $self->log->info(sprintf("$what child exited with value %d\n", $exit >> 8));
         }
     }
+
+    ################################################################
+
+    sub report_for {
+        my ($self, $test_id) = @_;
+
+        #; $DB::single = 1;
+        my $result = eval { $self->sql->db->query(
+'SELECT releases.name, releases.distribution, releases.version, tests.elapsed_time, tests.grade, tests.build_log, tests.report, tests.test_error, tests.reporter_error, environments.* FROM releases, environments,tests WHERE releases.id=tests.release_id AND environments.id=tests.environment_id AND tests.id=?',
+                                             $test_id)->hashes; };
+        # print "BORK";
+        # print "BORKER";
+        return $result;
+
+    }
+
 
 };
 

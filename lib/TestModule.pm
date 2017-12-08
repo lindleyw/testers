@@ -1,7 +1,7 @@
 package TestModule;
 
 use v5.10;
-use Data::Dumper;
+use Mojo::Base '-base';
 use Mojo::File;
 use File::Temp;
 use Config;
@@ -11,21 +11,25 @@ use Time::HiRes qw(gettimeofday tv_interval);
 use strict;
 use warnings;
 
+has 'config' => sub {
+    my $cf = CPAN::Testers::Common::Client::Config->new;
+    $cf->read;
+    return $cf;
+};
+
 my $verbose = 0;
 
 use Capture::Tiny;
 
-sub test_module {
+sub run {
     say "\nentering test_module\n" if ($verbose);
     system("date") if ($verbose);
 
-    my ($params) = shift;
-    say Dumper ($params) if ($verbose);
+    my ($self, $params) = @_;
+    # use Data::Dumper;
+    # say Dumper ($params) if ($verbose);
 
     # Find where our reports are going to be located
-    my $cf = CPAN::Testers::Common::Client::Config->new;
-
-    $cf->read;
 
     my $temp_dir_name = File::Temp->newdir;
 
@@ -70,7 +74,7 @@ sub test_module {
 # This only required for CPAN::Reporter, which we are not using here.
 # local $ENV{PERL_CPAN_REPORTER_DIR} = $temp_dir_name; # directory for config.ini
 
-    my $email = $cf->email_from;
+    my $email = $self->config->email_from;
 
     # Create a config.ini to override the default for cpanm-reporter
     $config_file->spurt(<<CONFIG);
