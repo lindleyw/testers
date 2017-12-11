@@ -21,19 +21,22 @@ my $verbose = 0;
 
 use Capture::Tiny;
 
+sub _with_perl {
+    my ($command, $perl_release) = @_;
+    return (defined $perl_release) ?
+	"perlbrew exec --with $perl_release " . $command :
+	$command;
+}
+
 sub run {
-    say "\nentering test_module\n" if ($verbose);
-    system("date") if ($verbose);
-
     my ($self, $params) = @_;
-    # use Data::Dumper;
-    # say Dumper ($params) if ($verbose);
 
-    # Find where our reports are going to be located
+    # Load default system config (see above) now, before $ENV{} settings are in effect
+    my $email = $self->config->email_from;
 
-    my $temp_dir_name = File::Temp->newdir;
-
+    # Create temporary directory, automatically purged
     # by default this uses CLEANUP => 1 (c.f. File::Temp doc)
+    my $temp_dir_name = File::Temp->newdir;  
 
     my $module       = $params->{module};
     my $perl_release = $params->{perl_release};
@@ -45,63 +48,51 @@ sub run {
     local $ENV{AUTOMATED_TESTING}      = 1;
 
     local $ENV{PERL_CPANM_HOME} = $temp_dir_name;
-    my @start_time = gettimeofday();
 
     # Build test command
     my $cpanm_test_command = "cpanm --test-only $module";
-    if (defined $perl_release) {   # prepend to use Perlbrew
-        $cpanm_test_command = "perlbrew exec --with $perl_release " . $cpanm_test_command;
-    }
 
+    # Execute command; track elapsed time; save status and output.
     say "  Shelling to: $cpanm_test_command" if ($verbose);
-    # Execute command; save status and output
-    my $test_exit = check_exit( $cpanm_test_command );
+    my @start_time = gettimeofday();
+    my $test_exit = check_exit( _with_perl($cpanm_test_command, $perl_release) );
     my $elapsed_time = tv_interval(\@start_time, [gettimeofday]); # Elapsed time as floating seconds
 
     my $build_file = Mojo::File->new($temp_dir_name)->child('build.log');
 
-    # Both the build log and the report log, can go into the same directory
-    # cpanm-reporter will put its report in the directory
-    # indicated by the 'transport' setting in file config.ini
-    # in the ~/.cpanmreporter directory
-    # ~/.cpanmreporter
+    # Both logs (build and report) can go into the same directory.
+    # cpanm-reporter will put its report in the directory indicated by
+    # the 'transport' setting in config.ini, which we override below
     local $ENV{CPANM_REPORTER_HOME} = $temp_dir_name;
+
+    # Create a config.ini with our settings, to be used by both
+    # cpanreporter and cpanm-reporter; set env to force its use
     my $config_file = Mojo::File->new($temp_dir_name)->child('config.ini');
-
-    local $ENV{PERL_CPAN_REPORTER_CONFIG} =
-      $config_file->to_string;    # exact location of config.ini
-
-# This only required for CPAN::Reporter, which we are not using here.
-# local $ENV{PERL_CPAN_REPORTER_DIR} = $temp_dir_name; # directory for config.ini
-
-    my $email = $self->config->email_from;
-
-    # Create a config.ini to override the default for cpanm-reporter
     $config_file->spurt(<<CONFIG);
 edit_report=default:no
 email_from=$email
 send_report=default:yes
 transport=File $temp_dir_name
 CONFIG
+    local $ENV{PERL_CPAN_REPORTER_CONFIG} = $config_file->to_string;    
 
+    # Below required only for CPAN::Reporter, which we are not using here:
+    # local $ENV{PERL_CPAN_REPORTER_DIR} = $temp_dir_name; # directory for config.ini
+
+    # Build and execute the reporter command
     my $cpanm_reporter_command =
       "cpanm-reporter --verbose "
       . "--build_dir=$temp_dir_name "
       . "--build_logfile=$build_file "
       . "--skip-history --ignore-versions --force ";
-    if (defined $perl_release) {  # prepend for Perlbrew
-        $cpanm_reporter_command = "perlbrew exec --with $perl_release " . $cpanm_reporter_command;
-    }
+    my $reporter_exit = check_exit( _with_perl($cpanm_reporter_command, $perl_release) );
 
-    my $reporter_exit = check_exit( $cpanm_reporter_command );
-
-    # At long last, our hero returns and discovers:
+    # At long last, our hero returns and can discover:
     # ${temp_dir_name}/{Status}.{module_name}-{build_env_stuff}.{timestamp}.{pid}.rpt
     # ${temp_dir_name}/work/{timestamp}.{pid}/build.log
-
     my $test_results = Mojo::File->new($temp_dir_name)->list_tree;
 
-    # Find the report file.  Extract the result (e.g., 'fail') and return with the filename.
+    # Find the report file.  Extract the complete filename and the result (e.g., 'fail').
     my $report_file = $test_results->map(
         sub {
             /^${temp_dir_name}   # directory name at start
@@ -110,23 +101,21 @@ CONFIG
                                               .*\.                # module name and build_env stuff
                                               (\d+)\.(\d+)        # timestamp.pid
                                               \.rpt\z/x    # trailing extension
-              ? ( $_, $1 ) : ();
+              ? ( $_, $1 ) : (); # filename and grade
         }
     );
 
     my ( $report_filename, $report_contents, $grade );
-    if ( $report_file->size )
-    {    # Report file exists.  Extract grade and contents.
+    if ( $report_file->size ) {    # Report file exists.  Extract grade and contents.
         $report_filename = $report_file->[0]->to_string;
         $grade           = $report_file->[1];
         $report_contents = Mojo::File->new($report_filename)->slurp
           if ( -e $report_filename );
     }
 
-# my $build_log = $test_results->grep(sub { /build.log$/ && !-l $_})->first; # ignore symlinks
     return {
-            success => 1,    # Completed, although possibly with errors
-            build_log => $build_file->slurp,   # Mojo::File->new($build_log)->slurp,
+            success => 1,                      # Completed, although possibly with errors
+            build_log => $build_file->slurp,   # …from above
             report    => $report_contents,
             length($error) ? ( error => $error ) : (),
             grade => $grade,

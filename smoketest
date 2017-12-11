@@ -165,7 +165,6 @@ package main::Command::update {
           'end_date=s'   => \my $end_date;
 
         # Split/join to also permit comma-delimited
-        @perl_versions = split ',', join ',', @perl_versions;
         my $releases =
           $self->app->smoker->get_metacpan( { count => $count,
                                               main_module => [split ',', join ',', @dists],
@@ -176,15 +175,14 @@ package main::Command::update {
                                               end_date => $end_date,
                                             } );
 
-        # use Data::Dumper;
-        # print STDERR Dumper($releases);
-
-        # Ensure we know about which Perl versions are installed
+        # Ensure updated list of installed Perl versions
         $self->app->smoker->update_perl_versions(@args);
 
         my @perl_test_versions;
-        foreach my $v (@perl_versions) {
-            my $vv = $self->app->smoker->get_environment({perl => $v});
+        foreach my $v (split ',', join ',', @perl_versions) {
+            # Look for Perlbrew name first, then Perl's self-reported version
+            my $vv = $self->app->smoker->get_environment({perlbrew => $v}) //
+                $self->app->smoker->get_environment({perl => $v});
             if (defined $vv) {
                 push @perl_test_versions, $vv
             } else {
@@ -193,7 +191,7 @@ package main::Command::update {
         }
         # Default to current environment
         if (!scalar @perl_test_versions) {
-          @perl_test_versions = $self->app->smoker->get_environment({id => $self->app->smoker->my_environment()});
+          @perl_test_versions = ($self->app->smoker->get_environment({id => $self->app->smoker->my_environment()}));
         }
         # Enqueue tests for each of those releases.
         if (defined $releases && !$skip_tests) {
@@ -218,11 +216,15 @@ package main::Command::update {
                                                    ->hashes->first->{id}};
                                     $skip = " (skipping, already tested)" if defined $skip;
                                 }
-                                $self->app->log->info('  ... ' . $_->{name} . ' (Perl ' . $v->{perl} . ')'. ($skip//''))
+                                $self->app->log->info('  ... ' . $_->{name} .
+                                                      ' (Perl ' . ($v->{perlbrew} // $v->{perl}) . ')' .
+                                                      ($skip//''))
                                   if $verbose;
                                 if (!defined $skip) {
                                     $self->app->minion->enqueue(test => [{release_id => $id, environment => $v->{id}}],
-                                                                {notes => {module_info => $_, perl_version => $v->{perl}}});
+                                                                {notes => {module_info => $_,
+                                                                           perl_version => ($v->{perlbrew} // $v->{perl})
+                                                                          }});
                                 }
                             }
                         });
