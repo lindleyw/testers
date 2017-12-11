@@ -245,6 +245,9 @@ package main::Command::do {
 
     sub run {
         my ($self) = @_;
+        if (!$self->app->smoker->tester->verify) {
+            die "Cannot run tests. (Have you configured an email address for cpanm-reporter?)"
+        }
         $self->app->minion->perform_jobs();
     }
     

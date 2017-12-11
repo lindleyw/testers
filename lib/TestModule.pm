@@ -17,6 +17,13 @@ has 'config' => sub {
     return $cf;
 };
 
+sub verify {
+    # Do we have a suitable environment for testing?
+    # For now, require only that the user has configured an email address for CPAN reports.
+    my ($self) = @_;
+    return defined $self->config->email_from;
+}
+
 my $verbose = 0;
 
 use Capture::Tiny;
