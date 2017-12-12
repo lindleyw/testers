@@ -378,6 +378,19 @@ get '/author/:auth' => sub {
     }
 };
 
+get '/tests' => sub {
+    my $self = shift;
+
+    # /distribution/Mojolicious
+    my $result = $self->smoker->get_tests();
+
+    if (defined $result) {
+        $self->render(json => $result);
+    } else {
+        $self->render(json => {error => 'Tests not found'});
+    }
+};
+
 get '/report/:id' => sub {
     my $self = shift;
 

@@ -127,7 +127,8 @@ package Tester::Smoker {
                 if (defined $id) {
                     # Newly-added version
                     my $version_specific = `perlbrew exec --with $v perl -MConfig -MSys::Hostname -e 'print join("\n", %Config{qw(osname osvers version archname)})'`;
-                    # returns, e.g.:  (perl-5.24.1)\n===...===\n and results
+                    # returns, e.g.: (perl-5.24.1)\n===...===\n and
+                    # results in form of: " * perl-5.24.0-alias (5.22)"
                     if ($version_specific =~ /===\s+(.*?)\s*\z/s) {
                         my $version_info = {split /\n/, $1};
                         eval {
@@ -597,6 +598,16 @@ package Tester::Smoker {
 
     }
 
+    ################
+
+    sub get_tests {
+        my ($self, $test_conditions) = @_;
+        # Points to Ponder:
+        #my $result = eval { $self->sql->db->select(-from => 'tests',
+        #                                           -columns =>
+        my $result = eval { $self->sql->db->query("select (select perlbrew from environments where id=environment_id) as perlbrew, (select distribution from releases where id=release_id) as distribution, (select version from releases where id=release_id) as version, datetime(start_time,'unixepoch') as timestamp, elapsed_time, grade from tests;")->hashes; };
+        return $result;
+    }
 
 };
 
