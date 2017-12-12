@@ -114,7 +114,7 @@ package Tester::Smoker {
         my $self = shift;
 
         # Do we have multiple Perl versions via Perlbrew?
-        my @perl_versions = grep {length} split(/\s*\*?\s+/, `perlbrew list`);
+        my @perl_versions = map {/^\s*\*?\s*(\S+)/} `perlbrew list`;
         if (! scalar @perl_versions) {
             # No Perlbrew; use only native ('this') Perl build. Leave old version records.
             $self->my_environment();
@@ -137,6 +137,11 @@ package Tester::Smoker {
                                                   $id
                                                  );
                         };
+                    } else {
+                        # Attempting to `perlbrew exec --with` an
+                        # alias, results in no output (not even an
+                        # error!)  so, "Don't do that."
+                        eval { $self->sql->db->query('DELETE FROM environments WHERE id=?',$id); };
                     }
                 }
             }
