@@ -276,6 +276,9 @@ package main::Command::rebuild {
 ################################################################
 ################################################################
 
+app->secrets(['Get your fresh smoked red-hot modules here!']);
+get '/' => 'index';
+
 push @{app->commands->namespaces}, 'main::Command';
 
 plugin 'Config';
@@ -506,3 +509,19 @@ get '/jobs/stats' => sub {
 app->start;
 
 __DATA__
+
+@@ index.html.ep
+<!DOCTYPE html>
+<html>
+<head>
+<title>Perl Smoker</title>
+</head>
+<body>
+<ul>
+<li><a href="/tests">JSON structure of all completed tests</a></li>
+<li><a href="/minion">Minion control panel</a> (Requires JavaScript enabled)</li>
+</ul>
+
+</body>
+</html>
+
