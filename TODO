@@ -1,0 +1,15 @@
+TODO
+
+Consider:
+
+Can we watch:
+  - a group of modules, or
+  - main programs (with associated cpanfiles like Carton), or
+  - a private repository (like a subset mirror of cpan)
+
+so that any changes to any *dependency* will trigger a test of all the
+affected modules?
+
+Can this be integrated with an automated build or continuous-
+integration system so that entire applications can be "pre-flight"
+tested before deployment?
