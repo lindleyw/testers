@@ -365,7 +365,7 @@ plugin 'Yancy' => {
                                                                  author => { type => 'string',
                                                                              readOnly => 1,
                                                                            },
-                                                                 downloaded_url => { type => 'string',
+                                                                 download_url => { type => 'string',
                                                                                      readOnly => 1,
                                                                                    },
                                                                  added => { type => 'string',
