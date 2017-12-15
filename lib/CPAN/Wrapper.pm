@@ -366,7 +366,8 @@ package CPAN::Wrapper {
         }
 
         my $req = { @want_count,
-                    'fields' => [qw(name version date author download_url main_module)],  # could add:  provides
+                    'fields' => [qw(name version date author download_url main_module)],
+                    # could add field:  provides
                     'filter' => {'and' => [_item_list('main_module', $args->{main_module}), # e.g., 'Mojolicious'
                                            _item_list('name', $args->{name}),     # e.g., 'Mojolicious-7.46'
                                            _item_list('author', $args->{author}),

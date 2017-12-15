@@ -250,7 +250,6 @@ package main::Command::do {
         }
         $self->app->minion->perform_jobs();
     }
-    
 };
 
 ################################################################
@@ -301,7 +300,6 @@ helper smoker => sub {
                                         # verbose  => $verbose,
                                         app => $self->app,
                                        );
-    
 };
 
 helper sql => sub {
@@ -316,6 +314,68 @@ helper db => sub {
 
 plugin Minion => {SQLite => 'sqlite:'. app->config->{dbname}};
 plugin 'Minion::Admin';
+print STDERR app->config->{dbname} . "\n";
+plugin 'Yancy' => {
+                   backend => 'sqlite:'. app->config->{dbname},
+                   collections => {
+                                   minion_jobs => { type => 'object',
+                                                    properties => { id => { type => 'integer',
+                                                                            readOnly => 1,
+                                                                          },
+                                                                    created => { type => 'string',
+                                                                                 format => 'date-time',
+                                                                                 readOnly => 1,
+                                                                               },
+                                                                    finished => { type => ['string','null'],
+                                                                                 format => 'date-time',
+                                                                                 readOnly => 1,
+                                                                                },
+                                                                    args => { type => ['string','null'], # NOTE: JSON
+                                                                                },
+                                                                    priority => { type => 'integer',
+                                                                                },
+                                                                    attempts => { type => 'integer',
+                                                                                },
+                                                                    queue => { type => 'string',
+                                                                               },
+                                                                    result => { type => ['string','null'],
+                                                                              },
+                                                                    retried => { type => ['string','null'],
+                                                                              },
+                                                                    started => { type => ['string','null'],
+                                                                               },
+                                                                    state => { enum => [qw(inactive active failed finished)],
+                                                                             },
+                                                                  }
+                                                  },
+                                   releases => { type => 'object',
+                                                 properties => { id => { type => 'integer',
+                                                                         readOnly => 1,
+                                                                       },
+                                                                 name => { type => 'string',
+                                                                           readOnly => 1,
+                                                                         },
+                                                                 version => { type => ['string', 'null'],
+                                                                           readOnly => 1,
+                                                                            },
+                                                                 released => { type => ['string', 'null'],
+                                                                               format => 'date-time',
+                                                                               readOnly => 1,
+                                                                             },
+                                                                 author => { type => 'string',
+                                                                             readOnly => 1,
+                                                                           },
+                                                                 downloaded_url => { type => 'string',
+                                                                                     readOnly => 1,
+                                                                                   },
+                                                                 added => { type => 'string',
+                                                                            format => 'date-time',
+                                                                            readOnly => 1,
+                                                                         },
+                                                               }
+                                                },
+                                  },
+                  };
 
 ################
 

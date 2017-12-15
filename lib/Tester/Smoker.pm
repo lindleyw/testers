@@ -329,9 +329,11 @@ package Tester::Smoker {
             $releases->each(sub {
                                 $_->{id} = eval {$self->sql->db->insert(-into => 'releases',
                                                                         -values => {%$_{qw(name version
-                                                                                           released author
-                                                                                           download_url)},
-                                                                                   distribution => $_->{main_module}},
+                                                                                           author download_url)},
+                                                                                    distribution => $_->{main_module},
+                                                                                    # MetaCPAN has 'date' in Postgres time format
+                                                                                    released => $_->{date} =~ s/T/ /r,
+                                                                                   },
                                                                        )->last_insert_id;
                                              };
                                 if (!defined $_->{id}) {  # Probably already existed
