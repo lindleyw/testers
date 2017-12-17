@@ -646,6 +646,7 @@ __DATA__
 <body>
 <ul>
 <li><a href="/tests">JSON structure of all completed tests</a></li>
+<li><a href="/yancy">Yancy API panel</a> (Requires JavaScript enabled)</li>
 <li><a href="/minion">Minion control panel</a> (Requires JavaScript enabled)</li>
 </ul>
 
