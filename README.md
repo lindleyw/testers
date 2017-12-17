@@ -39,8 +39,9 @@ REQUIREMENTS:
     # For Debian/Ubuntu:
     $ sudo apt install sqlite3 libssl-dev zlib1g-dev
 
-    $ cpanm Mojolicious Mojo::SQLite Minion Minion::Backend::SQLite\
-      YAML App::cpanminus::reporter SQL::Abstract::More Yancy
+    $ cpanm Mojolicious Mojo::SQLite SQL::Abstract::More \
+      Minion Minion::Backend::SQLite Email::Address \
+      YAML App::cpanminus::reporter Yancy
 
 USAGE:
 
