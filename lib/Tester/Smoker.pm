@@ -37,7 +37,7 @@ package Tester::Smoker {
     has 'cpan' => sub {
         my ($self) = @_;
         my $cpan = CPAN::Wrapper->new(config => $self->config->{cpan},
-                                  log => $self->log,
+                                      log => $self->log,
                                      );
 
         # Returns record for the latest CPAN version from our
@@ -564,7 +564,8 @@ package Tester::Smoker {
         my @show_error = (defined $test_error) ? (test_error => $test_error) : ();
         $minion_job->minion->enqueue(report => [{test_id => $test_id,
                                                  release_id => $release_id,
-                                                 %{$result}{qw(grade elapsed_time)},
+                                                 %{$result}{qw(grade)},
+                                                 duration => $result->{elapsed_time},
                                                  @show_error,
                                                 }],
                                      {parents => [$minion_job->info->{id}]});

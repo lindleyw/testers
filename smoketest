@@ -19,6 +19,8 @@ use lib "$FindBin::Bin/lib/";
 use CPAN::Wrapper;
 use Tester::Smoker;
 
+our $VERSION='0.01';
+
 ################################################################
 
 # Can be called as, e.g.,
@@ -538,7 +540,6 @@ get '/distribution/:dist' => sub {
 get '/author/:auth' => sub {
     my $self = shift;
 
-    # /distribution/Mojolicious
     my $result = eval { $self->db->query('SELECT * FROM releases WHERE author=?',
                                          $self->stash('auth'))->hashes; };
     if (defined $result) {
@@ -551,7 +552,6 @@ get '/author/:auth' => sub {
 get '/tests' => sub {
     my $self = shift;
 
-    # /distribution/Mojolicious
     my $result = $self->smoker->get_tests();
 
     if (defined $result) {
@@ -560,6 +560,13 @@ get '/tests' => sub {
         $self->render(json => {error => 'Tests not found'});
     }
 };
+
+#### TODO: Helper to build result data structure
+
+#### TODO: POST to $self->app->config->{submit_report}
+
+
+
 
 get '/report/:id' => sub {
     my $self = shift;
@@ -588,9 +595,11 @@ get '/report/:id' => sub {
                                      version => $test->{version},  # should be same as $release_version
                                    },
                    result => { grade => $test->{grade},
-                               output => $test->{report},
+                               output => { uncategorized => $test->{report} },
+                               duration => int( ($test->{duration} // $test->{elapsed_time} // 0) +.5 ), # API wants integer
                                # XXX: Question: Do we want $test->{build_log} ?
                              },
+                   user_agent => $self->app->config->{user_agent} // 'Smoketest/'.$VERSION,
                    };
     $self->render(json => $result);
 };
@@ -634,8 +643,6 @@ get '/test/:id' => sub {
 app->minion->add_task ( update => sub { my ($job, @args) = @_;
                                                 my $results = $job->app->smoker->get_recent(@args);
                                                 if (defined $results) {
-                                                    # TODO: possibly:
-                                                    # $job->app->minion->enqueue('check_regex', ... ?
                                                     $job->finished();
                                                 } else {
                                                     $job->fail('Could not download updates list')
