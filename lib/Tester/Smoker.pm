@@ -33,6 +33,16 @@ package Tester::Smoker {
         TestModule->new;
     };
 
+    use Email::Address;
+    has 'user_email' => sub {
+        my ($self) = @_;
+        state $email_from = (Email::Address->parse($self->tester->config->email_from))[0];
+        state $email_hash = (defined $email_from) ?
+            {email => $email_from->address, name => $email_from->name} :
+            {email => 'NOT CONFIGURED!', name => 'NOT CONFIGURED!'};
+        return $email_hash;
+    };
+
     use CPAN::Wrapper;
     has 'cpan' => sub {
         my ($self) = @_;
@@ -67,6 +77,17 @@ package Tester::Smoker {
 
         $cpan->current_cpan({%{$cpan_module}{qw(version author)}}); # Completes the cpan object's attributes
         return $cpan;
+    };
+
+    use CPAN::TestersDB;
+    has 'testersdb' => sub { # An interface to the external CPAN Testers db
+                             # via CPAN::Testers::API et al
+        my ($self) = @_;
+        my $cpan_tester = CPAN::TestersDB->new(config => $self->config->{db_api},
+                                               log => $self->log,
+                                               user_email => $self->user_email,
+                                           );
+        return $cpan_tester;
     };
 
     sub new {
@@ -531,8 +552,8 @@ package Tester::Smoker {
         }
 
         my $result = $self->tester->run({module => $module_info->{download_url},
-                                              perl_release => $perlbuild
-                                             });
+                                         perl_release => $perlbuild
+                                        });
         {
             my $log_msg = 'Test complete, '. $module_info->{name} .' ->';
             $log_msg .= ' grade='.$result->{grade} if defined $result->{grade};
@@ -593,8 +614,8 @@ package Tester::Smoker {
 
         #; $DB::single = 1;
         my $result = eval { $self->sql->db->query(
-'SELECT releases.name, releases.distribution, releases.version, tests.elapsed_time, tests.grade, tests.build_log, tests.report, tests.test_error, tests.reporter_error, environments.* FROM releases, environments,tests WHERE releases.id=tests.release_id AND environments.id=tests.environment_id AND tests.id=?',
-                                             $test_id)->hashes; };
+'SELECT releases.name, releases.distribution, releases.version, tests.elapsed_time, tests.grade, tests.build_log, tests.report, tests.test_error, tests.reporter_error, environments.* FROM releases, environments,tests WHERE releases.id=tests.release_id AND environments.id=tests.environment_id AND tests.id=? LIMIT 1',
+                                             $test_id)->hashes->first; };
         # print "BORK";
         # print "BORKER";
         return $result;

@@ -8,7 +8,6 @@ use Mojo::File;
 use Mojo::UserAgent;
 use Mojo::DOM;
 use List::Util qw(pairs);
-use Email::Address;
 use v5.22;
 use strict;
 use warnings;
@@ -16,7 +15,6 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/lib/";
 
-use CPAN::Wrapper;
 use Tester::Smoker;
 
 our $VERSION='0.01';
@@ -561,48 +559,33 @@ get '/tests' => sub {
     }
 };
 
-#### TODO: Helper to build result data structure
-
-#### TODO: POST to $self->app->config->{submit_report}
-
-
-
+################
 
 get '/report/:id' => sub {
     my $self = shift;
 
     my $test = $self->smoker->report_for($self->stash('id'));
-    unless (defined $test && defined ($test = $test->first)) {
+    unless (defined $test) {
         $self->render(json => {error => 'Report not found'});
         return undef;
     }
-    my ($release_name, $release_version) = $test->{name} =~ m{^(.+)-([^-]+)};
-    my $email_from = (Email::Address->parse($self->smoker->tester->config->email_from))[0];
-    my ($submitter_email, $submitter_name) = (defined $email_from) ?
-         ( $email_from->address, $email_from->name ) : ('NOT CONFIGURED!','NOT CONFIGURED!');
-    my $result = { environment => { language => { name => 'Perl 5',
-                                                  version => $test->{perl},
-                                                  archname => $test->{archname},
-                                                },
-                                    system => { osname => $test->{osname},
-                                                osversion => $test->{osvers},
-                                              },
-                                  },
-                   reporter => { email => $submitter_email,
-                                 name =>  $submitter_name,
-                               },
-                   distribution => { name => $release_name,
-                                     version => $test->{version},  # should be same as $release_version
-                                   },
-                   result => { grade => $test->{grade},
-                               output => { uncategorized => $test->{report} },
-                               duration => int( ($test->{duration} // $test->{elapsed_time} // 0) +.5 ), # API wants integer
-                               # XXX: Question: Do we want $test->{build_log} ?
-                             },
-                   user_agent => $self->app->config->{user_agent} // 'Smoketest/'.$VERSION,
-                   };
-    $self->render(json => $result);
+    $self->render(json => $self->smoker->testersdb->report_json($test));
 };
+
+app->minion->add_task ( report => sub { my ($job, @args) = @_;
+                                        my $test = $job->app->smoker->report_for($args[0]->{release_id}) if defined $args[0]->{release_id};
+                                        my $test_json = $job->app->smoker->testersdb->report_json($test);
+                                        my $result = $job->app->smoker->testersdb->submit_report($test_json);
+
+                                        if (defined $result) {
+                                            $job->finish($result);
+                                        } else {
+                                            $job->fail({error => 'Failed to submit report', %{$result}})
+                                        }
+                                    }
+                      );
+
+################
 
 get '/tests/#release' => sub {
     my $self = shift;
