@@ -41,7 +41,7 @@ package CPAN::TestersDB {
                                  },
                  result => { grade => $test->{grade},
                              output => { uncategorized => $test->{report} },
-                             duration => int( ($test->{duration} // $test->{elapsed_time} // 0) +.5 ), # API wants integer
+                             duration => ($test->{duration} // $test->{elapsed_time} // 0) +.5,
                              # XXX: Question: Do we want $test->{build_log} ?
                            },
                  user_agent => $self->config->{user_agent} // 'Smoketest/'.$::VERSION,

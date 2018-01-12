@@ -13,3 +13,42 @@ affected modules?
 Can this be integrated with an automated build or continuous-
 integration system so that entire applications can be "pre-flight"
 tested before deployment?
+
+
+2018-01-11 with Doug, Ray
+
+cpanm module@version
+
+but that does not give you control of dependencies
+so... how do we totally control for regression testing?
+
+consider looking at stratopan.com and Pinto
+...and Nigel's tests
+
+or: Docker.  Mount a set of depencies which all get deleted when
+virtual machine closes, unless you specifically ask for them to remain
+
+Slaven rezik ... has been trying to work on external/system
+dependencies: cpan-sysdeps -- mapping to cpan modules, packages,
+system packages probably something we want to use, to ensure that we
+can indeed test a module
+
+
+
+in valid.v3.json
+
+...summary/{dist}/{version} ...
+[add:]
+{ "name": "grade",
+  "in": "query"
+  "description": "Filter results by grade",
+  "type": "string",
+  "enum": ["pass",.....
+
+
+and then CPAN/TEsters/API/Controller/Summary.pm
+
+in sub summary ($c) { ... } we add the validation->param(...)
+
+
+and in t/controller/summary.t   ... add tests
