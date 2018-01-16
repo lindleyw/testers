@@ -27,6 +27,9 @@ package Tester::Smoker {
     has '_update_regex'; # Flag set when we find a new version of
                          # CPAN, to remind us to fetch and save the
                          # appropriate new regex
+    has 'report_queue' => 'deferred'; # Default to deferring reports.
+                                      # 'default' will cause them to
+                                      # be dequeued.
 
     use TestModule;
     has 'tester' => sub {
@@ -317,15 +320,17 @@ package Tester::Smoker {
         # with results from /module we use the name of the first (only?) module
         my $module_name = eval { $fields->{module}->[0]->{name}; } // $fields->{main_module};
         return undef unless defined $module_name;
+        # print STDERR "save: ".$fields->{main_module};
         my $id = eval {
             # Database constraint will throw exception if attempt to
             # duplicate (name,version), so blithely we:
-            $self->sql->db->query('INSERT INTO releases(name, version, released, author, download_url) '.
-                                  'VALUES (?,?,?,?,?)',
-                                  $module_name,
+            $self->sql->db->query('INSERT INTO releases(name, distribution, version, released, author, download_url) '.
+                                  'VALUES (?,?,?,?,?,?)',
+                                  $module_name, $fields->{main_module},
                                   @{$fields}{qw(version date author download_url)})
             ->last_insert_id;
-            };
+        };
+        # print STDERR "->$id $! $@\n";
         return $id;
     }
 
@@ -477,6 +482,18 @@ package Tester::Smoker {
                                                    $info->{$_.'_exit'}->{error},  # explanation of process exit code
                                                  ));
         }
+
+        # TODO: May want to save actual kernel version currently
+        # running.  the $Config{osvers} value reflects the kernel
+        # version *at Perl build time* not now (at run time).  It is
+        # also possible for the kernel version to change between
+        # testing and report submission, if this host is updated, so
+        # this should be stored per-test.  Use something like this:
+        ####
+        # use POSIX;
+        # my ($osname, $hostname, $kernel_version) = (POSIX::uname())[0..2]; 
+        ####
+
         my $test_id = eval { $self->sql->db->insert(-into => 'tests',
                                                     -values => {%{$info}{
                                                         qw(release_id environment_id
@@ -501,7 +518,9 @@ package Tester::Smoker {
         my $grade;
 
         if (! $release_id) {
-            $self->log->error("No module_id");
+            my $error = "No module_id";
+            $self->log->error($error);
+            $minion_job->fail($error);
             return 0;
         }
 
@@ -514,8 +533,16 @@ package Tester::Smoker {
         # Check against 'disabled' regex; if matches, fail with error.
         my $dis_by = $self->release_disabled_by($release_id);
         if ($dis_by) {  # module is disabled
-            $self->log->warn("module is disabled by $dis_by");
-            $minion_job->fail("module is disabled by $dis_by");
+            my $error = "module is disabled by $dis_by";
+            $self->log->warn($error);
+            $minion_job->fail($error);
+            return 0;
+        }
+
+        if (!defined $module_info->{name} || !defined $module_info->{version}) {
+            my $error = "module (release_id=$release_id) is missing name or version";
+            $self->log->warn($error);
+            $minion_job->fail($error);
             return 0;
         }
 
@@ -541,8 +568,9 @@ package Tester::Smoker {
         my $pb = eval { $self->sql->db->select(-from => 'environments',
                                                -where => {id => $env_id})->hashes->first; };
         if (!defined $pb) {
-            $self->log->error("Can't find environment (id=$env_id)");
-            $minion_job->fail("Can't find environment (id=$env_id)");
+            my $error_msg = "Can't find environment (id=$env_id)";
+            $self->log->error($error_msg);
+            $minion_job->fail($error_msg);
             return 0;
         }
         {
@@ -589,7 +617,7 @@ package Tester::Smoker {
                                                  duration => $result->{elapsed_time},
                                                  @show_error,
                                                 }],
-                                     {queue => 'deferred',
+                                     {queue => $self->report_queue,
                                       parents => [$minion_job->info->{id}]});
         $self->log->info("Report enqueued");
     }

@@ -82,11 +82,18 @@ grep { $_->{version} eq '7.60' &&            # Module version
 
 and in sqlite:
 
-select distinct(name) from releases,tests where releases.id=tests.release_id order by name;
+select distinct(distribution) from releases,tests where releases.id=tests.release_id order by distribution;
+filename will be as:
 
-then pull the version number from the end of the revision name
-select a unique list of those
-and get the file as above, check for matching tests
+   sqlite> select distinct(substr(distribution,1,1)||'/'||replace(distribution,'::','-')) from releases;
+
+prepended with 'http://www.cpantesters.org/static/distro/' and appended with '.json'
+
+Get the file as above, check for matching tests
+
+Match each entry in the json where $_->{distversion} is e.g.,
+'JMAP-Tester-0.016' against our database's releases.name column
+
 
 NOTE: need to keep a list for each module name, of the module_ids and
 matching test_ids

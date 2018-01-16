@@ -25,8 +25,9 @@ package CPAN::TestersDB {
         # Formats a test report per the CPAN::Testers::API submission standard
         my ($self, $test) = @_;
 
+        return undef unless defined $test;
         my ($release_name, $release_version) = $test->{name} =~ m{^(.+)-([^-]+)};
-        print STDERR "report_json ($release_name)\n";
+        $self->log->info("report_json ($release_name)");
         return { environment => { language => { name => 'Perl 5',
                                                 version => $test->{perl},
                                                 archname => $test->{archname},
@@ -57,7 +58,8 @@ package CPAN::TestersDB {
         my $result = eval { $ua->max_redirects(5)->post($source_url,
                                                        json => $test_json); };
         # $DB::single = 1;
-        print STDERR "Submit report ($source_url): result code=" .  $result->res->{code} . "\n" if (defined $result);
+        $self->log->info("Submit report ($source_url): result code=" .  $result->res->{code})
+            if (defined $result);
         return (!defined $result) ? undef : { url => $source_url,         # where we submitted
                                               code => $result->res->code,
                                               body => $result->res->body,
@@ -72,11 +74,6 @@ package CPAN::TestersDB {
         my $source_url = Mojo::URL->new($self->config->{metacpan}->{$type // 'module'}); # API endpoint
         push @{$source_url->path->parts}, $module_name;
     }
-
-
-
-
-
 
 };
 

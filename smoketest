@@ -59,7 +59,7 @@ package main::Command::list {
                                             my $release_id = eval{$_->{args}->[0]->{'release_id'}};
                                             if (defined $release_id) {
                                                 my $info = $self->app->smoker->get_release_info({id => $release_id}) if defined $release_id;
-                                                if (!defined $info) {
+                                                if (!defined $info || !$info->size) {
                                                     ()
                                                 } else {
                                                     [ $_->{id}, $_->{state},
@@ -573,9 +573,12 @@ get '/report/:id' => sub {
 };
 
 app->minion->add_task ( report => sub { my ($job, @args) = @_;
-                                        my $test = $job->app->smoker->report_for($args[0]->{release_id}) if defined $args[0]->{release_id};
+                                        my $test_release_id = $args[0]->{release_id};
+                                        my $test = $job->app->smoker->report_for($test_release_id)
+                                          if defined $test_release_id;
                                         my $test_json = $job->app->smoker->testersdb->report_json($test);
-                                        my $result = $job->app->smoker->testersdb->submit_report($test_json);
+                                        my $result = $job->app->smoker->testersdb->submit_report($test_json)
+                                          if defined $test_json;
 
                                         if (defined $result) {
                                             $job->finish($result);
