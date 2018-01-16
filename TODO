@@ -52,3 +52,45 @@ in sub summary ($c) { ... } we add the validation->param(...)
 
 
 and in t/controller/summary.t   ... add tests
+
+
+================
+
+We can retrieve the entire list of test results from, e.g.,
+
+http://www.cpantesters.org/static/distro/M/Mojolicious.js
+
+---begin---
+use Mojo::JSON;
+use Mojo::UserAgent;
+$u = Mojo::UserAgent->new->get('http://www.cpantesters.org/static/distro/M/Mojolicious.json');
+$j = Mojo::JSON::decode_json($u->res->body);
+
+use POSIX;
+($osname, $hostname, $kernel_version) = (POSIX::uname())[0..2]; 
+$match_osvers = ($kernel_version =~ /^(\d+\.\d+)/, $1);
+
+@matching_tests = 
+grep { $_->{version} eq '7.60' &&            # Module version
+     $_->{platform} eq $Config{archname} &&  # Matching our architecture, O.S., OS version (roughly),
+     fc($_->{osname}) eq fc($Config{osname}) &&
+     $match_osvers eq ($_->{osvers} =~ /^(\d+\.\d+)/, $1) &&
+     $_->{perl} eq $Config{version}          # and Perl version
+  } @{$j};
+
+---end---
+
+and in sqlite:
+
+select distinct(name) from releases,tests where releases.id=tests.release_id order by name;
+
+then pull the version number from the end of the revision name
+select a unique list of those
+and get the file as above, check for matching tests
+
+NOTE: need to keep a list for each module name, of the module_ids and
+matching test_ids
+
+TODO BILL:
+
+$tests { module_name } { version } { osname } { osversion } { arch } [ { guid, local_flag, grade } ]

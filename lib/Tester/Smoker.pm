@@ -589,7 +589,8 @@ package Tester::Smoker {
                                                  duration => $result->{elapsed_time},
                                                  @show_error,
                                                 }],
-                                     {parents => [$minion_job->info->{id}]});
+                                     {queue => 'deferred',
+                                      parents => [$minion_job->info->{id}]});
         $self->log->info("Report enqueued");
     }
 
