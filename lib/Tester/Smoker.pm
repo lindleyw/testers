@@ -301,8 +301,7 @@ package Tester::Smoker {
     ################################################################
 
     sub get_environment {
-      # Retrieves the latest information for a module
-      # TODO: rename to get_release_info
+      # Retrieves environment information
       my ($self, $where) = @_;
       my $results = eval {
         $self->sql->db->select(-from => 'environments',
@@ -416,6 +415,52 @@ package Tester::Smoker {
     sub get_metacpan {
         my ($self, $args) = @_;
         return $self->save_releases(Mojo::Collection->new($self->cpan->get_metacpan($args)));
+    }
+
+    ################
+
+    sub get_releases {
+        my ($self, $args) = @_;
+
+        # Choose only filled arguments: defined scalars, and non-empty arrays.
+        my $picked_args = {  $args->%{grep { ref $args->{$_} eq 'ARRAY' ? scalar @{$args->{$_}} : defined $args->{$_} } keys %{$args}}  };
+        my $results = eval { $self->sql->db->select( -from => 'releases',
+                                                     -where => $picked_args,
+                                                     -order_by => [qw(distribution author)],
+                                                   );
+                         };
+        return $results->hashes if defined $results; # a Mojo::Collection
+        return undef;
+    }
+
+    ################################################################
+
+    sub get_tests {
+        my ($self, $args) = @_;
+        # args is e.g., {distribution => $name, id => \@array_of_distribution_ids}
+
+        my $our_tests = eval { $self->sql->db->select( -from => 'tests',
+                                                       -where => {release_id => $args->{id}}, # an array, so creates an IN... clause
+                                                       -columns => [qw(id release_id environment_id start_time elapsed_time grade report_sent)],
+                                                     )->hashes;
+                           };
+
+        foreach (@{$our_tests}) {
+            my $env = $self->get_environment({id => $_->{environment_id}});
+            $_->@{qw(archname perl osname osvers perlbrew)} = $env->@{qw(archname perl osname osvers perlbrew)};
+            $_->{distribution} = $args->{distribution};
+        }
+        return $our_tests;
+    }
+
+    sub compare_tests {
+        my ($self, $args) = @_;
+
+        use Data::Dumper;
+        print Dumper($args);
+        my $our_tests = $self->get_tests($args);
+        print Dumper($our_tests->to_array);
+
     }
 
     ################################################################
@@ -673,7 +718,7 @@ package Tester::Smoker {
 
     ################
 
-    sub get_tests {
+    sub get_all_tests {
         my ($self, $test_conditions) = @_;
         # Points to Ponder:
         #my $result = eval { $self->sql->db->select(-from => 'tests',
