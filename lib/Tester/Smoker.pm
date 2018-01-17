@@ -148,26 +148,43 @@ package Tester::Smoker {
                     $self->sql->db->query('INSERT INTO environments(host, perlbrew) VALUES (?,?)',
                                           hostname(), $v)->last_insert_id;
                 };
-                if (defined $id) {
-                    # Newly-added version
-                    my $version_specific = `perlbrew exec --with $v perl -MConfig -MSys::Hostname -e 'print join("\n", %Config{qw(osname osvers version archname)})'`;
-                    # returns, e.g.: (perl-5.24.1)\n===...===\n and
-                    # results in form of: " * perl-5.24.0-alias (5.22)"
-                    if ($version_specific =~ /===\s+(.*?)\s*\z/s) {
-                        my $version_info = {split /\n/, $1};
-                        eval {
-                            $self->sql->db->query('UPDATE environments '.
-                                                  'SET osname=?, osvers=?, perl=?, archname=? WHERE id=?',
-                                                  $version_info->@{qw(osname osvers version archname)}, # hash slice
-                                                  $id
-                                                 );
-                        };
-                    } else {
-                        # Attempting to `perlbrew exec --with` an
-                        # alias, results in no output (not even an
-                        # error!)  so, "Don't do that."
-                        eval { $self->sql->db->query('DELETE FROM environments WHERE id=?',$id); };
-                    }
+                ; $DB::single = 1;
+                if (!defined $id) {
+                    $id = eval{$self->sql->db->select(-from => 'environments',
+                                                      -columns => 'id',
+                                                      -where => { host => hostname(),
+                                                                  perlbrew => $v
+                                                                }
+                                                     )->hashes->first->{id}};
+                }
+                if (!defined $id) {
+                    $self->log->error("Cannot add perl version $v");
+                    next;
+                }
+                # NOTE: Uses currently-running kernel version from
+                # POSIX::uname().  This is actually subject to
+                # change with host's kernel, but because we really
+                # only care about perlbrew version in environments
+                # table (see above), running this routine again
+                # will update the kernel version (see below).
+                my $version_specific = `perlbrew exec --with $v perl -MConfig -MSys::Hostname -e 'use POSIX; print join("\n", %Config{qw(osname version archname)}, 'osvers', (POSIX::uname())[2])'`;
+                # returns, e.g.: (perl-5.24.1)\n===...===\n and
+                # results in form of: " * perl-5.24.0-alias (5.22)"
+                if ($version_specific =~ /===\s+(.*?)\s*\z/s) {
+                    my $version_info = {split /\n/, $1};
+                    eval {
+                        $self->sql->db->update( -table => 'environments',
+                                                -set => { $version_info->%{qw(osname osvers archname)}, # hash slice
+                                                          perl => $version_info->{version},
+                                                        },
+                                                -where => { id => $id }
+                                              );
+                    };
+                } else {
+                    # Attempting to `perlbrew exec --with` an
+                    # alias, results in no output (not even an
+                    # error!)  so, "Don't do that."
+                    eval { $self->sql->db->query('DELETE FROM environments WHERE id=?',$id); };
                 }
             }
         }
@@ -493,6 +510,9 @@ package Tester::Smoker {
         # use POSIX;
         # my ($osname, $hostname, $kernel_version) = (POSIX::uname())[0..2]; 
         ####
+        # Which means we need to differentiate between the "desired
+        # environment id" when the test-run was dequeued, and the
+        # "actual environment id" which was actually run.
 
         my $test_id = eval { $self->sql->db->insert(-into => 'tests',
                                                     -values => {%{$info}{
