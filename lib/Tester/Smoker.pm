@@ -435,7 +435,7 @@ package Tester::Smoker {
 
     ################################################################
 
-    sub get_tests {
+    sub get_local_tests {
         my ($self, $args) = @_;
         # args is e.g., {distribution => $name, id => \@array_of_distribution_ids}
 
@@ -453,14 +453,56 @@ package Tester::Smoker {
         return $our_tests;
     }
 
+    sub get_remote_tests {
+        # TODO: Probably ought to cache this in our db
+
+        my ($self, $args) = @_;
+        # args is e.g., {distribution => $name, id => \@array_of_distribution_ids}
+        # From the list of (local) distribution_ids, we want to match the name and version
+
+        use Mojo::UserAgent;
+        my $u = Mojo::URL->new($self->config->{cpan}->{cpantesters_static});
+        push @{$u->path->parts}, substr($args->{distribution},0,1), $args->{distribution} =~ s/::/-/gr . '.json';
+        $u->path->trailing_slash(0);
+        # ; $DB::single = 1;
+        my $results = Mojo::UserAgent->new->get($u);
+        if (defined $results) {
+            $results = Mojo::JSON::decode_json($results->res->body);
+        }
+        return $results;
+    }
+
     sub compare_tests {
         my ($self, $args) = @_;
 
-        use Data::Dumper;
-        print Dumper($args);
-        my $our_tests = $self->get_tests($args);
-        print Dumper($our_tests->to_array);
+        # Given a single distribution name (e.g., 'Mojolicious'),
+        # compares possibly multiple release versions of that
+        # distribution, and possibly several Perlbrew environments
+        # ... to results from the cpantesters database
 
+        # use Data::Dumper;
+        # print Dumper($args);
+        my $our_tests = $self->get_local_tests($args);
+        # print Dumper($our_tests->to_array);
+        my $their_tests = $self->get_remote_tests($args);
+
+        # Perhaps want something like:
+
+        # @matching_tests = 
+        # grep { $_->{version} eq '7.60' &&            # Module version
+        #      $_->{platform} eq $Config{archname} &&  # Matching our architecture, O.S., OS version (roughly),
+        #      fc($_->{osname}) eq fc($Config{osname}) &&
+        #      $match_osvers eq ($_->{osvers} =~ /^(\d+\.\d+)/, $1) &&
+        #      $_->{perl} eq $Config{version}          # and Perl version
+        #   } @{$j};
+
+        ; $DB::single = 1;
+        # my $their_filtered_tests = grep {
+        #     ...
+        # } @{$their_tests};
+        # print "Xyzzy";
+
+        # TODO: what next...?
     }
 
     ################################################################
