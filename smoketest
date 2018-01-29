@@ -359,7 +359,7 @@ helper db => sub {
 
 plugin Minion => {SQLite => 'sqlite:'. app->config->{dbname}};
 plugin 'Minion::Admin';
-print STDERR app->config->{dbname} . "\n";
+# print STDERR app->config->{dbname} . "\n";
 plugin 'Yancy' => {
                    backend => 'sqlite:'. app->config->{dbname},
                    collections => {
@@ -418,7 +418,7 @@ plugin 'Yancy' => {
                                                                              description => 'CPAN author',
                                                                              readOnly => 1,
                                                                            },
-                                                                 download_url => { type => 'string',
+                                                                 download_url => { type => ['string', 'null'],
                                                                                    description => 'Location to download the module release',
                                                                                    readOnly => 1,
                                                                                  },
