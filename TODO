@@ -54,6 +54,16 @@ in sub summary ($c) { ... } we add the validation->param(...)
 and in t/controller/summary.t   ... add tests
 
 
+2018-01-24
+
+To enqueue a job with Held status, e.g., the Reports --
+
+  - enqueue a job in an alternate queue ('hold' queue)
+  - make the target job a child of that held job (set parent to other job's id)
+  
+
+
+
 ================
 
 We can retrieve the entire list of test results from, e.g.,
