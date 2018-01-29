@@ -512,6 +512,8 @@ package Tester::Smoker {
     ### versus asking MetaCPAN.
     ###
 
+    # TODO:  use Hash::MoreUtils::slice_exists( \%hash, list_of_keys )
+
     sub _pick {
       # Similar to the hash slice, » $hash->%{@elements} «
       # but only picks defined entries.
