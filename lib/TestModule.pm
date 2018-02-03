@@ -17,6 +17,11 @@ has 'config' => sub {
     return $cf;
 };
 
+has 'perlbrew' => 'perlbrew exec --with';
+
+# NOTE: May want "-L $local_lib_dir" as well, to isolate dependency installations.
+has 'cpanm_test' => 'cpanm --test-only';
+
 sub verify {
     # Do we have a suitable environment for testing?
     # For now, require only that the user has configured an email address for CPAN reports.
@@ -28,11 +33,9 @@ my $verbose = 0;
 
 use Capture::Tiny;
 
-sub _with_perl {
-    my ($command, $perl_release) = @_;
-    return (defined $perl_release) ?
-	"perlbrew exec --with $perl_release " . $command :
-	$command;
+sub with_perl {
+    my ($self, $command, $perl_release) = @_;
+    return (defined $perl_release) ? join(' ',$self->perlbrew, $perl_release, $command) : $command;
 }
 
 sub run {
@@ -57,12 +60,12 @@ sub run {
     local $ENV{PERL_CPANM_HOME} = $temp_dir_name;
 
     # Build test command
-    my $cpanm_test_command = "cpanm --test-only $module";
+    my $cpanm_test_command = join(' ', $self->cpanm_test, $module);
 
     # Execute command; track elapsed time; save status and output.
     say "  Shelling to: $cpanm_test_command" if ($verbose);
     my @start_time = gettimeofday();
-    my $test_exit = check_exit( _with_perl($cpanm_test_command, $perl_release) );
+    my $test_exit = check_exit( $self->with_perl($cpanm_test_command, $perl_release) );
     my $elapsed_time = tv_interval(\@start_time, [gettimeofday]); # Elapsed time as floating seconds
 
     my $build_file = Mojo::File->new($temp_dir_name)->child('build.log');

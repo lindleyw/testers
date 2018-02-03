@@ -33,14 +33,28 @@ our $VERSION='0.01';
 package main::Command::list {
     use Mojo::Base 'Mojolicious::Command';
     use Minion::Backend;
+    use Mojo::Util qw(getopt);
 
     has 'description' => 'List currently-enqueued tests to be run';
+    has usage => <<"=cut";
+
+=head2 List
+
+Usage: APPLICATION list [state] [-count N]
+
+Lists jobs in state (inactive (*), finished, failed) (*) default\n
+=cut
 
     sub run {
         my ($self, @args) = @_;
 
+        getopt \@args, [qw(auto_abbrev)],
+          'count=i' => \my $count,
+          ;
+
+
         my $job_state = $args[0] // 'inactive';    # 'finished' or 'failed' are useful
-        my $jobs = $self->app->minion->backend->list_jobs(0, 50,  # offset, limit
+        my $jobs = $self->app->minion->backend->list_jobs(0, $count // 50,  # offset, limit
                                                           {state => $job_state,
                                                            task => 'test',
                                                           }
@@ -78,36 +92,13 @@ package main::Command::list {
 
 ################################################################
 
-package main::Command::update_perl_versions {
-    use Mojo::Base 'Mojolicious::Command';
-
-    has 'description' => 'Updates the list of Perl versions installed via Perlbrew';
-    has usage => sub { shift->extract_usage };
-
-=head1 SYNOPSIS
-
-Usage: APPLICATION update_perl_versions [options]
-
-Options:
-   -v ver something
-=cut
-
-    sub run {
-        my ($self, @args) = @_;
-
-        return $self->app->smoker->update_perl_versions(@args);
-    }
-};
-
-################################################################
-
 package main::Command::regex {
     use Mojo::Base 'Mojolicious::Command';
 
     has 'description' => 'Retrieves and updates, from metacpan, the cached copy of the regex for disabled modules';
-    has usage => sub { shift->extract_usage };
+    has usage => <<"=cut";
 
-=head1 SYNOPSIS
+=head2 Regex
 
 Usage: APPLICATION regex [options]
 
@@ -148,6 +139,17 @@ package main::Command::update {
     use Mojo::Util qw(getopt);
 
     has 'description' => 'Retrieves distribution info from MetaCPAN and enqueues tests';
+    has usage => <<"=cut";
+
+=head2 Update
+
+Usage: APPLICATION update [-v|--verbose] [-count=N] [-force] [-notest] [--distribution=DIST]
+                          [--version=N.NN] [--release=N] [--author=N] [--perl_version=N]
+                          [--start_date=YYYY-MM-DD] [--end_date=YYYY-MM-DD]
+
+Retrieve a list of Perl module distributions from CPAN.
+
+=cut
 
     sub run {
         my ($self, @args) = @_;
@@ -345,6 +347,13 @@ helper smoker => sub {
                                         # verbose  => $verbose,
                                         app => $self->app,
                                        );
+
+    foreach my $conf_val (qw(perlbrew cpanm_test)) {
+        $smoker->tester->$conf_val($self->config->{smoker}->{$conf_val})
+          if defined $self->config->{smoker}->{$conf_val};
+    }
+
+    return $smoker;
 };
 
 helper sql => sub {

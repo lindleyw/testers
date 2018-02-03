@@ -33,7 +33,7 @@ package Tester::Smoker {
 
     use TestModule;
     has 'tester' => sub {
-        TestModule->new;
+        state $tm = TestModule->new;
     };
 
     use Email::Address;
