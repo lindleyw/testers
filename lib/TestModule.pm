@@ -105,7 +105,7 @@ CONFIG
       . "--build_dir=$temp_dir_name "
       . "--build_logfile=$build_file "
       . "--skip-history --ignore-versions --force ";
-    my $reporter_exit = check_exit( _with_perl($cpanm_reporter_command, $perl_release) );
+    my $reporter_exit = check_exit( $self->with_perl($cpanm_reporter_command, $perl_release) );
 
     # At long last, our hero returns and can discover:
     # ${temp_dir_name}/{Status}.{module_name}-{build_env_stuff}.{timestamp}.{pid}.rpt
