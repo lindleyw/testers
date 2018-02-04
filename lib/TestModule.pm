@@ -16,11 +16,13 @@ has 'config' => sub {
     $cf->read;
     return $cf;
 };
+has 'log';
 
 has 'perlbrew' => 'perlbrew exec --with';
 
 # NOTE: May want "-L $local_lib_dir" as well, to isolate dependency installations.
 has 'cpanm_test' => 'cpanm --test-only';
+has 'local_lib';
 
 sub verify {
     # Do we have a suitable environment for testing?
@@ -46,7 +48,7 @@ sub run {
 
     # Create temporary directory, automatically purged
     # by default this uses CLEANUP => 1 (c.f. File::Temp doc)
-    my $temp_dir_name = File::Temp->newdir;  
+    my $temp_dir_name = File::Temp->newdir;
 
     my $module       = $params->{module};
     my $perl_release = $params->{perl_release};
@@ -60,10 +62,18 @@ sub run {
     local $ENV{PERL_CPANM_HOME} = $temp_dir_name;
 
     # Build test command
-    my $cpanm_test_command = join(' ', $self->cpanm_test, $module);
+    my @cpanm_args = ($self->cpanm_test);
+    if ($self->local_lib) {  # This is the root of the local_libs
+        my $use_lib = Mojo::File->new($self->local_lib);
+        $use_lib->child($perl_release) if defined $perl_release; # Specific to version
+        push @cpanm_args, '-L', $use_lib;
+    }
+    push @cpanm_args, $module;
+
+    my $cpanm_test_command = join(' ', @cpanm_args);
 
     # Execute command; track elapsed time; save status and output.
-    say "  Shelling to: $cpanm_test_command" if ($verbose);
+    $self->log->info("Shelling to: $cpanm_test_command") if (defined $self->log);
     my @start_time = gettimeofday();
     my $test_exit = check_exit( $self->with_perl($cpanm_test_command, $perl_release) );
     my $elapsed_time = tv_interval(\@start_time, [gettimeofday]); # Elapsed time as floating seconds
@@ -84,7 +94,7 @@ email_from=$email
 send_report=default:yes
 transport=File $temp_dir_name
 CONFIG
-    local $ENV{PERL_CPAN_REPORTER_CONFIG} = $config_file->to_string;    
+    local $ENV{PERL_CPAN_REPORTER_CONFIG} = $config_file->to_string;
 
     # Below required only for CPAN::Reporter, which we are not using here:
     # local $ENV{PERL_CPAN_REPORTER_DIR} = $temp_dir_name; # directory for config.ini

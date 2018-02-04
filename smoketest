@@ -68,7 +68,7 @@ Lists jobs in state (inactive (*), finished, failed) (*) default\n
                                         }
                                         @{$jobs->{jobs}} ];
         } else {
-            print Mojo::Util::tablify [ [qw/Job Status Distribution Version Author/],
+            print Mojo::Util::tablify [ [qw/Job Status Distribution Version Author Perl/],
                                         map {
                                             my $release_id = eval{$_->{args}->[0]->{'release_id'}};
                                             if (defined $release_id) {
@@ -77,7 +77,8 @@ Lists jobs in state (inactive (*), finished, failed) (*) default\n
                                                     ()
                                                 } else {
                                                     [ $_->{id}, $_->{state},
-                                                      $info->first->@{qw/name version author/}
+                                                      $info->first->@{qw/name version author/},
+                                                      $_->{notes}->{perl_version} // '',
                                                     ]
                                                 }
                                             } else {
@@ -348,7 +349,7 @@ helper smoker => sub {
                                         app => $self->app,
                                        );
 
-    foreach my $conf_val (qw(perlbrew cpanm_test)) {
+    foreach my $conf_val (qw(perlbrew cpanm_test local_lib)) {
         $smoker->tester->$conf_val($self->config->{smoker}->{$conf_val})
           if defined $self->config->{smoker}->{$conf_val};
     }
