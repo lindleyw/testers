@@ -76,4 +76,4 @@ CREATE TABLE tests (
 
 -- 2 up
 
-ALTER TABLE releases ADD COLUMN distribution TEXT;      // e.g., 'Mojo::Pg'
+ALTER TABLE releases ADD COLUMN distribution TEXT;      -- e.g., 'Mojo::Pg'
