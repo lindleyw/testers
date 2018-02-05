@@ -20,13 +20,15 @@ has 'log';
 
 has 'perlbrew' => 'perlbrew exec --with';
 
-# NOTE: May want "-L $local_lib_dir" as well, to isolate dependency installations.
 has 'cpanm_test' => 'cpanm --test-only';
-has 'local_lib';
+has 'local_lib';    # If set, use '-L' and this to keep test
+                    # dependencies separate from the ordinary
+                    # installation
 
 sub verify {
-    # Do we have a suitable environment for testing?
-    # For now, require only that the user has configured an email address for CPAN reports.
+    # Do we have a suitable environment for testing?  For now, require
+    # only that the user has configured an email address for CPAN
+    # reports.
     my ($self) = @_;
     return defined $self->config->email_from;
 }
@@ -43,11 +45,12 @@ sub with_perl {
 sub run {
     my ($self, $params) = @_;
 
-    # Load default system config (see above) now, before $ENV{} settings are in effect
+    # Load default system config (see above) now, before $ENV{}
+    # settings are in effect
     my $email = $self->config->email_from;
 
-    # Create temporary directory, automatically purged
-    # by default this uses CLEANUP => 1 (c.f. File::Temp doc)
+    # Create temporary directory, automatically purged by default this
+    # uses CLEANUP => 1 (c.f. File::Temp doc)
     my $temp_dir_name = File::Temp->newdir;
 
     my $module       = $params->{module};
@@ -107,7 +110,7 @@ CONFIG
       . "--skip-history --ignore-versions --force ";
     my $reporter_exit = check_exit( _with_perl($cpanm_reporter_command, $perl_release) );
 
-    # At long last, our hero returns and can discover:
+    # At long last, our hero returns and can discover these files:
     # ${temp_dir_name}/{Status}.{module_name}-{build_env_stuff}.{timestamp}.{pid}.rpt
     # ${temp_dir_name}/work/{timestamp}.{pid}/build.log
     my $test_results = Mojo::File->new($temp_dir_name)->list_tree;
@@ -148,8 +151,8 @@ CONFIG
 
 sub check_exit {
 
-# Executes a system command.
-# Returns a descriptive error if something went wrong, or undef if everything's OK
+    # Executes a system command.
+    # Returns a descriptive error if something went wrong, or undef if everything's OK
     my ( $command ) = @_;
 
     my $signal_received;
@@ -196,6 +199,7 @@ sub check_exit {
     } else {
         $status->{error} = sprintf( "Child exited with value %d", $exit >> 8 );
     }
+    $self->log->warn($status->{command} . ' --> ' . $status->{error}) if defined $self->log;
     return $status;
 }
 

@@ -43,6 +43,21 @@ REQUIREMENTS:
       Minion Minion::Backend::SQLite Email::Address \
       YAML App::cpanminus::reporter Yancy
 
+CONFIGURATION:
+
+The file smoketest.conf contains a number of configuration parameters,
+along with explanatory comments.  The base keys are:
+
+  * db: The SQLite database name
+
+  * db_api: Submission URL and user agent for CPANTesters API
+    submissions
+
+  * cpan: Interface for retrieval from cpan.org, cpantesters.org,
+    metacpan.org
+
+  * smoker: Interface to `cpanm` command
+
 USAGE:
 
     $ chmod a+x smoketest
@@ -91,7 +106,10 @@ You can view the Minion AdminUI by starting a Mojolicious daemon:
 
     $ ./smoketest daemon &
 
-The AdminUI is by default at http://localhost:3000
+The AdminUI is by default at http://localhost:3000.  You can specify
+to listen at a different location as:
+
+    $ ./smoketest daemon -l http://*:8080
 
 ---
 
@@ -106,7 +124,8 @@ directly:
      $ ./smoketest minion job -S inactive  # shows queued jobs
      $ ./smoketest minion job -S finished  # shows completed jobs
 
-or by pointing your browser at http://localhost:3000
+or by pointing your browser at http://localhost:3000 (or the listen
+address specified as above)
 
     /modules           module statistics
     /module/:modname   information about given module
@@ -118,6 +137,10 @@ or by pointing your browser at http://localhost:3000
     /job/:id           status of a given minion job
     del /job/:id       remove a minion job by id_number
     /jobs/stats        minion stats
+
+Other Minion Worker command parameters are listed at:
+
+    $ ./smoketest minion help worker
 
 ---
 (obsolete section) -- (CHANGE to explain building your own exclude file)
