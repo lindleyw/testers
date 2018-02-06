@@ -30,6 +30,51 @@ our $VERSION='0.01';
 
 ################################################################
 
+package main::Command::release {
+    use Mojo::Base 'Mojolicious::Command';
+    use Minion::Backend;
+    use Mojo::Util qw(getopt);
+
+    has 'description' => 'Release a currently-enqueued report';
+    has usage => <<"=cut";
+
+=head2 Release
+
+Usage: APPLICATION release [IDS] [-count N]
+
+Releases one or more report jobs by ID, or from newest by count
+=cut
+
+    sub run {
+        my ($self, @args) = @_;
+
+        getopt \@args, [qw(auto_abbrev)],
+        'count=i' => \my $count,
+          ;
+        my @ids = @args; # remaining
+
+        my $jobs = $self->app->minion->backend->list_jobs(0, scalar @args || $count // 50,  # offset, limit
+                                                          {state => 'inactive',
+                                                           task => 'report',
+                                                           queue => 'deferred',
+                                                          }
+                                                         );
+        foreach my $job (@{$jobs->{jobs}}) {
+            # ; $DB::single = 1;
+            my ($id, $retries) = $job->@{qw(id retries)};  # array slice from hash
+            # print "($id, $retries) ";
+            if ($self->app->minion->backend->retry_job($id, $retries, {queue => 'default'})) {
+                $self->app->log->info("Released report job $id");
+            } else {
+                $self->app->log->error("Failed to release job $id");
+            }
+        }
+
+    }
+}
+
+################################################################
+
 package main::Command::list {
     use Mojo::Base 'Mojolicious::Command';
     use Minion::Backend;
@@ -50,19 +95,19 @@ Lists jobs in state (inactive (*), finished, failed) (*) default\n
 
         getopt \@args, [qw(auto_abbrev)],
         'count=i' => \my $count,
-        'report'  => \my $show_report,
+        'report'  => \my $show_defer,
           ;
 
 
         my $job_state = $args[0] // 'inactive';    # 'finished' or 'failed' are useful
         my $jobs = $self->app->minion->backend->list_jobs(0, $count // 50,  # offset, limit
                                                           {state => $job_state,
-                                                           task => ($show_report ? 'report' : 'test'),
-                                                           $show_report ? (queue => 'deferred') : (),
+                                                           task => ($show_defer ? 'report' : 'test'),
+                                                           $show_defer ? (queue => 'deferred') : (),
                                                           }
                                                          );
-        if ($show_report) {
-            # Show queued report jobs
+        if ($show_defer) {
+            # Show queued report jobs which are held for manual release
             # TODO: Combine with 'unfinished' tablify below
             print Mojo::Util::tablify [ [qw/Job Status Distribution Version Perl Grade/],
                                         map {
