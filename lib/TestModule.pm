@@ -78,7 +78,7 @@ sub run {
     # Execute command; track elapsed time; save status and output.
     $self->log->info("Shelling to: $cpanm_test_command") if (defined $self->log);
     my @start_time = gettimeofday();
-    my $test_exit = check_exit( $self->with_perl($cpanm_test_command, $perl_release) );
+    my $test_exit = $self->check_exit( $self->with_perl($cpanm_test_command, $perl_release) );
     my $elapsed_time = tv_interval(\@start_time, [gettimeofday]); # Elapsed time as floating seconds
 
     my $build_file = Mojo::File->new($temp_dir_name)->child('build.log');
@@ -108,7 +108,7 @@ CONFIG
       . "--build_dir=$temp_dir_name "
       . "--build_logfile=$build_file "
       . "--skip-history --ignore-versions --force ";
-    my $reporter_exit = check_exit( $self->with_perl($cpanm_reporter_command, $perl_release) );
+    my $reporter_exit = $self->check_exit( $self->with_perl($cpanm_reporter_command, $perl_release) );
 
     # At long last, our hero returns and can discover these files:
     # ${temp_dir_name}/{Status}.{module_name}-{build_env_stuff}.{timestamp}.{pid}.rpt
@@ -153,7 +153,7 @@ sub check_exit {
 
     # Executes a system command.
     # Returns a descriptive error if something went wrong, or undef if everything's OK
-    my ( $command ) = @_;
+    my ( $self, $command ) = @_;
 
     my $signal_received;
     my $stderr;

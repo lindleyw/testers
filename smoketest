@@ -40,7 +40,7 @@ package main::Command::list {
 
 =head2 List
 
-Usage: APPLICATION list [state] [-count N]
+Usage: APPLICATION list [state] [-count N] [-reports]
 
 Lists jobs in state (inactive (*), finished, failed) (*) default\n
 =cut
@@ -49,26 +49,22 @@ Lists jobs in state (inactive (*), finished, failed) (*) default\n
         my ($self, @args) = @_;
 
         getopt \@args, [qw(auto_abbrev)],
-          'count=i' => \my $count,
+        'count=i' => \my $count,
+        'report'  => \my $show_report,
           ;
 
 
         my $job_state = $args[0] // 'inactive';    # 'finished' or 'failed' are useful
         my $jobs = $self->app->minion->backend->list_jobs(0, $count // 50,  # offset, limit
                                                           {state => $job_state,
-                                                           task => 'test',
+                                                           task => ($show_report ? 'report' : 'test'),
+                                                           $show_report ? (queue => 'deferred') : (),
                                                           }
                                                          );
-        if ($job_state eq 'finished') {
-            print Mojo::Util::tablify [ [qw/Job Perl Result/],
-                                        map {
-                                            [ $_->{id}, $_->{notes}->{perl_version},
-                                              $_->{result}
-                                            ]
-                                        }
-                                        @{$jobs->{jobs}} ];
-        } else {
-            print Mojo::Util::tablify [ [qw/Job Status Distribution Version Author Perl/],
+        if ($show_report) {
+            # Show queued report jobs
+            # TODO: Combine with 'unfinished' tablify below
+            print Mojo::Util::tablify [ [qw/Job Status Distribution Version Perl Grade/],
                                         map {
                                             my $release_id = eval{$_->{args}->[0]->{'release_id'}};
                                             if (defined $release_id) {
@@ -77,8 +73,9 @@ Lists jobs in state (inactive (*), finished, failed) (*) default\n
                                                     ()
                                                 } else {
                                                     [ $_->{id}, $_->{state},
-                                                      $info->first->@{qw/name version author/},
+                                                      $info->first->@{qw/name version/},
                                                       $_->{notes}->{perl_version} // '',
+                                                      eval{$_->{args}->[0]->{'grade'}} // '(unknown)',
                                                     ]
                                                 }
                                             } else {
@@ -86,6 +83,35 @@ Lists jobs in state (inactive (*), finished, failed) (*) default\n
                                             }
                                         }
                                         @{$jobs->{jobs}} ];
+        } else {
+            if ($job_state eq 'finished') {
+                print Mojo::Util::tablify [ [qw/Job Perl Result/],
+                                            map {
+                                                [ $_->{id}, $_->{notes}->{perl_version},
+                                                  $_->{result}
+                                                ]
+                                            }
+                                            @{$jobs->{jobs}} ];
+            } else { 
+                print Mojo::Util::tablify [ [qw/Job Status Distribution Version Author Perl/],
+                                            map {
+                                                my $release_id = eval{$_->{args}->[0]->{'release_id'}};
+                                                if (defined $release_id) {
+                                                    my $info = $self->app->smoker->get_release_info({id => $release_id}) if defined $release_id;
+                                                    if (!defined $info || !$info->size) {
+                                                        ()
+                                                    } else {
+                                                        [ $_->{id}, $_->{state},
+                                                          $info->first->@{qw/name version author/},
+                                                          $_->{notes}->{perl_version} // '',
+                                                        ]
+                                                    }
+                                                } else {
+                                                    ()
+                                                }
+                                            }
+                                            @{$jobs->{jobs}} ];
+            }
         }
         return;
     }
@@ -628,6 +654,12 @@ get '/report/:id' => sub {
 };
 
 app->minion->add_task ( report => sub { my ($job, @args) = @_;
+
+                                        ; $DB::single = 1;
+                                        # TODO: If queue is 'deferred': ...?
+
+
+
                                         my $test_release_id = $args[0]->{release_id};
                                         my $test = $job->app->smoker->report_for($test_release_id)
                                           if defined $test_release_id;
