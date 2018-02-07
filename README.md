@@ -143,19 +143,40 @@ Other Minion Worker command parameters are listed at:
     $ ./smoketest minion help worker
 
 ---
-(obsolete section) -- (CHANGE to explain building your own exclude file)
-NOTE: The above step uses a YAML file which should contain (1) a regex
-that selects one or more modules by name; and (2) the setting
-disabled=1.  Alternately, if it says disabled=0 then the regex will
-*enable* the selected modules.
+
+As tests complete, they will create a Minion job to submit the report
+to the CPANTesters API.  By default these jobs are placed in Minion's
+'deferred' queue and must be manually reviewed before being sent.  You
+can list the reports awaiting approval with:
+
+    $ ./smoketest list -r
+
+which will emit a list like:
+
+    Job   Status    Distribution                       Version  Perl  Grade
+    1729  inactive  App-abgrep-0.003                   0.003          pass
+    1728  inactive  CSS-DOM-0.17                       0.17           pass
+    1727  inactive  Test-Time-HiRes-0.01               0.01           pass
+
+And you can release jobs either as:
+
+    $ ./smoketest release -count 3
+
+which will release the 3 most recent tests, or by specifying job
+numbers:
+
+    $ ./smoketest release 1729 1727
+
+
+
+
 ---
-
-TODO: Also allow loading local files and setting priority, as:
-
-    $ ./smoketest disable ~/mydisabled.yml --priority 10
-
-TODO: Pick a better verb instead of the possibly misleading 'disable'
-
+NOTE: Before a test is run, the name and version of the module are
+tested against a YAML file which should contain (1) a regex that
+selects one or more modules by name; and (2) the setting disabled=1.
+Alternately, if it says disabled=0 then the regex will *enable* the
+selected modules.  By default, only the 01.DISABLED.yml file from
+the current CPAN version, in this format, is used.
 ---
 
 
