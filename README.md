@@ -167,7 +167,7 @@ numbers:
 
     $ ./smoketest release 1729 1727
 
-==========
+---
 
 NOTE: Before a test is run, the name and version of the module are
 tested against a YAML file which should contain (1) a regex that
@@ -176,7 +176,7 @@ Alternately, if it says disabled=0 then the regex will *enable* the
 selected modules.  By default, only the 01.DISABLED.yml file from
 the current CPAN version, in this format, is used.
 
-==========
+---
 
 NOTE: On running the cpanm-reporter command for first time, it asks a
 bunch of options and then creates its configuration file:
