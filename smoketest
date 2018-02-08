@@ -752,7 +752,10 @@ get '/test/:id' => sub {
     my $result = eval { $self->db->query('SELECT * FROM tests WHERE id=?',
                                          $self->stash('id'))->hashes; };
     if (defined $result) {
-        $self->render(json => $result);
+        ; $DB::single = 1;
+        $self->respond_to(json => {json => $result},
+                          html => {text => '<pre>'.eval{$result->[0]->{build_log}}.'</pre>'},
+                          any => {text => eval{$result->[0]->{build_log}}});
     } else {
         $self->render(json => {error => 'Test not found'});
     }
