@@ -169,6 +169,24 @@ numbers:
 
 ---
 
+Completed tests can be viewed at a URL as:
+
+    http://localhost:3000/test/1729
+
+This route responds to JSON with the full test structure, and to HTML
+and TXT formats (TXT being the fallback default) with the combined log
+output.  For example either of:
+
+    $ ./smoketest get /test/1729?format=json
+    $ ./smoketest get /test/1729.json
+
+will display the test result structure in JSON format.  Possibly
+useful will be the json_pp program:
+
+    $ ./smoketest get /test/1729.json | json_pp
+
+---
+
 NOTE: Before a test is run, the name and version of the module are
 tested against a YAML file which should contain (1) a regex that
 selects one or more modules by name; and (2) the setting disabled=1.
