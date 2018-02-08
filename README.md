@@ -167,88 +167,22 @@ numbers:
 
     $ ./smoketest release 1729 1727
 
+==========
 
-
-
----
 NOTE: Before a test is run, the name and version of the module are
 tested against a YAML file which should contain (1) a regex that
 selects one or more modules by name; and (2) the setting disabled=1.
 Alternately, if it says disabled=0 then the regex will *enable* the
 selected modules.  By default, only the 01.DISABLED.yml file from
 the current CPAN version, in this format, is used.
----
-
-
 
 ==========
 
-running cpanm-reporter for first time:
+NOTE: On running the cpanm-reporter command for first time, it asks a
+bunch of options and then creates its configuration file:
 
-  See CPAN::Testers::Common::Client::Config documentation for more
-  details.
+  CPAN Testers: writing config file to '/home/YOUR_USER/.cpanreporter/config.ini'.
 
-asks a bunch of options and then:
-
-  CPAN Testers: writing config file to '/home/billl/.cpanreporter/config.ini'.
-
-
-==========
-
-releases within last 2 days --? izzit true?
-
-curl -XPOST 'https://fastapi.metacpan.org/v1/file' -d "$(curl -Ls gist.github.com/metacpan-user/5705999/raw/body.json)"
-
-with:
-
----begin---
-{
-  "query": {
-    "match_all": {}
-  },
-  "filter": {
-    "and": [
-      {
-        "term": {
-          "path": "cpanfile"
-        }
-      },
-      {
-        "term": {
-          "status": "latest"
-        }
-      },
-      {
-        "range" : {
-            "date" : {
-                "gte" : "now-2d/d",
-                "lt" :  "now/d"
-            }
-        }        
-      }    
-    ]
-  },
-  "fields": [
-    "release", "date"
-  ],
-  "size": 200
-}
----end---
-
-or:
-
----begin---
-{ "query": { "match_all": {} }, "filter": { "and": [ { "term": { "path": "cpanfile" } }, { "term": { "status": "latest" } }, { "or": [ {"term" : { "author" : "PREACTION" } }, {"term" : { "author" : "JBERGER" }} ] } ] }, "fields": [ "release", "date", "author" ], "size": 200 }
----end---
-
-                                                                                 
-{ 'size' => 200,
-  'fields' => ['release', 'date', 'author', 'download_url', 'version'],
-  'filter' => {'and' => [ {'term' => {'path' => 'cpanfile'}},
-                          {'term' => {'status' => 'latest'}},
-                          {'or' => [{'term' => {'author' => 'PREACTION'}},
-                                      {'term' => {'author' => 'JBERGER'}}]}
-                         ]},
-  'query' => {'match_all' => {}}
-}
+See CPAN::Testers::Common::Client::Config documentation for more
+details.
 
