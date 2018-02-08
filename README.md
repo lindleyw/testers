@@ -58,6 +58,17 @@ along with explanatory comments.  The base keys are:
 
   * smoker: Interface to `cpanm` command
 
+    - the `local_lib` parameter in `smoker`, if set, will append the
+      `-L` switch to the cpanm invocation, along with the value given,
+      and suffixed with a subdirectory name equal to the version of
+      Perlbrew used for the given test.  This has the effect of
+      isolating the dependencies which cpanm installs even with
+      `--test-only` from each base Perlbrew installation.
+
+      A `local_lib` value somewhere under `/tmp` for example will
+      effectively cache all installed dependent CPAN modules in a
+      place which is usually flushed at system reboot.
+
 USAGE:
 
     $ chmod a+x smoketest
