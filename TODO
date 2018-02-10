@@ -1,8 +1,41 @@
 TODO
 
--- submitting a report (Yancy?)
+- Configurable timeout.  Revisit TestModule.pm to re-enable this
+  functionality; add a smoketest.conf value for it.
 
+- When release grade is null, in most cases these reports should not
+  be submitted.  It means "something went wrong" and that could have
+  many reasons (timeout, process abort, disk failure...).  Require the
+  use of a 'force' flag to actually submit them. Also ensure grade is
+  set to 'unknown' and not null.
 
+- improve dashboard at project web root to include statistics and
+  links to tests enqueued and being processed.  Possibly add a textbox
+  to permit enqueueing a specific module (and optionally version
+  number).
+
+- Add a parameter to the 'update' endpoint to permit also enqueueing a
+  further update with delayed execution at a specified number of
+  seconds in the future.  Ensure there is no pending update before
+  doing so.  Also need a way (other parameter, other endpoint) to
+  delete any pending update. This will permit unattended operation.
+
+- Modify how we call Capture::Tiny to send output to some sort of web
+  socket (maybe?) or at least not to echo on worker's console
+  [[RAY to investigate]]
+
+- Continue integration with improvements to CPAN::Testers::API
+
+- Update the Yancy configuration with `type => 'textarea'` for
+  multi-line fields.
+
+- Future: Update the Yancy configuration with extended field
+  information with view links for test reports (and possibly others)
+  to new endpoint(s) using Mojo templates.  It would be convenient to
+  view the combined log, the STDERR-only error log, and other data in
+  a more readable format.
+
+---
 
 
 Consider:
