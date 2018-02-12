@@ -169,7 +169,7 @@ sub check_exit {
         # this one won't work with apostrophes like above
         local $SIG{__DIE__} = sub { $signal_received = "Die" };
 
-	($stderr, my $exit_value) = Capture::Tiny::capture_stderr(sub { system($command ); });
+	($stderr, my $exit_value) = Capture::Tiny::capture_merged(sub { system($command ); });
         return $exit_value;
     };
 
