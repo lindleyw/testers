@@ -347,6 +347,26 @@ package main::Command::rebuild {
 
 ################################################################
 
+package main::Command::report {
+    use Mojo::Base 'Mojolicious::Command';
+    use Mojo::Util qw(getopt);
+
+    has 'description' => 'Displays the build log for the given report ID number';
+
+    sub run {
+        my ($self, $id) = @_;
+
+        die "Must specify report ID" unless defined $id;
+
+        my $result = eval { $self->app->db->query('SELECT * FROM tests WHERE id=?',$id)->hashes; };
+        if (defined $result) {
+            print eval{$result->[0]->{build_log}}."\n";
+        }
+    }
+};
+
+################################################################
+
 package main::Command::compare {
     use Mojo::Base 'Mojolicious::Command';
     use Mojo::Util qw(getopt);
@@ -754,7 +774,6 @@ get '/test/:id' => sub {
     my $result = eval { $self->db->query('SELECT * FROM tests WHERE id=?',
                                          $self->stash('id'))->hashes; };
     if (defined $result) {
-        ; $DB::single = 1;
         $self->respond_to(json => {json => $result},
                           html => {text => '<pre>'.eval{$result->[0]->{build_log}}.'</pre>'},
                           any => {text => eval{$result->[0]->{build_log}}});
