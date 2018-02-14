@@ -111,6 +111,10 @@ To display completed jobs:
 
     $ ./smoketest list finished
 
+To display the build log of a completed test, by ID:
+
+    $ ./smoketest report 14
+
 ---
 
 You can view the Minion AdminUI by starting a Mojolicious daemon:
