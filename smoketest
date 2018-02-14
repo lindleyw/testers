@@ -722,10 +722,7 @@ get '/report/:id' => sub {
 
 app->minion->add_task ( report => sub { my ($job, @args) = @_;
 
-                                        ; $DB::single = 1;
                                         # TODO: If queue is 'deferred': ...?
-
-
 
                                         my $test_release_id = $args[0]->{release_id};
                                         my $test = $job->app->smoker->report_for($test_release_id)
