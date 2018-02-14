@@ -73,7 +73,6 @@ sub run {
     }
     push @cpanm_args, $module;
 
-    print STDERR "****** $perl_release ******\n";
     my $cpanm_test_command = $self->with_perl(join(' ', @cpanm_args), $perl_release);
 
     # Execute command; track elapsed time; save status and output.

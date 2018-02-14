@@ -118,7 +118,6 @@ package Tester::Smoker {
         # Returns the id of our native (non-Perlbrew) environment, adding it if required
         my $self = shift;
 
-        # ; $DB::single = 1;
         my $my_config = {host => hostname(),
                          %Config{qw(osname osvers archname)},  # hash slice
                          perl => $Config{version},
@@ -149,7 +148,6 @@ package Tester::Smoker {
                     $self->sql->db->query('INSERT INTO environments(host, perlbrew) VALUES (?,?)',
                                           hostname(), $v)->last_insert_id;
                 };
-                ; $DB::single = 1;
                 if (!defined $id) {
                     $id = eval{$self->sql->db->select(-from => 'environments',
                                                       -columns => 'id',
@@ -251,7 +249,6 @@ package Tester::Smoker {
         };
         return undef unless defined $module_info;
 
-        # ; $DB::single = 1;
         $module_info->each( sub {
                               my $module_id = $_->{id};
                               my $regex_match = join('/', $_->{author}, $_->{name});
@@ -465,7 +462,6 @@ package Tester::Smoker {
         my $u = Mojo::URL->new($self->config->{cpan}->{cpantesters_static});
         push @{$u->path->parts}, substr($args->{distribution},0,1), $args->{distribution} =~ s/::/-/gr . '.json';
         $u->path->trailing_slash(0);
-        # ; $DB::single = 1;
         my $results = Mojo::UserAgent->new->get($u);
         if (defined $results) {
             $results = Mojo::JSON::decode_json($results->res->body);
@@ -497,7 +493,6 @@ package Tester::Smoker {
         #      $_->{perl} eq $Config{version}          # and Perl version
         #   } @{$j};
 
-        ; $DB::single = 1;
         # my $their_filtered_tests = grep {
         #     ...
         # } @{$their_tests};
@@ -735,26 +730,11 @@ package Tester::Smoker {
         $self->log->info("Report enqueued");
     }
 
-    ################
-
-    sub check_exit {
-        my ($self, $exit, $what) = @_;
-        if ( $exit == -1 ) {
-            $self->log->error ("$what failed to execute: $!");
-        } elsif ( $exit & 127 ) {
-            $self->log->error( sprintf("$what child died with signal %d, %s coredump\n",
-                                       ( $exit & 127 ), ( $exit & 128 ) ? 'with' : 'without'));
-        } else {
-            $self->log->info(sprintf("$what child exited with value %d\n", $exit >> 8));
-        }
-    }
-
     ################################################################
 
     sub report_for {
         my ($self, $test_id) = @_;
 
-        #; $DB::single = 1;
         my $result = eval { $self->sql->db->query(
 'SELECT releases.name, releases.distribution, releases.version, tests.elapsed_time, tests.grade, tests.build_log, tests.report, tests.test_error, tests.reporter_error, environments.* FROM releases, environments,tests WHERE releases.id=tests.release_id AND environments.id=tests.environment_id AND tests.id=? LIMIT 1',
                                              $test_id)->hashes->first; };
