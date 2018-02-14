@@ -73,12 +73,13 @@ sub run {
     }
     push @cpanm_args, $module;
 
-    my $cpanm_test_command = join(' ', @cpanm_args);
+    print STDERR "****** $perl_release ******\n";
+    my $cpanm_test_command = $self->with_perl(join(' ', @cpanm_args), $perl_release);
 
     # Execute command; track elapsed time; save status and output.
     $self->log->info("Shelling to: $cpanm_test_command") if (defined $self->log);
     my @start_time = gettimeofday();
-    my $test_exit = $self->check_exit( $self->with_perl($cpanm_test_command, $perl_release) );
+    my $test_exit = $self->check_exit( $cpanm_test_command );
     my $elapsed_time = tv_interval(\@start_time, [gettimeofday]); # Elapsed time as floating seconds
 
     my $build_file = Mojo::File->new($temp_dir_name)->child('build.log');

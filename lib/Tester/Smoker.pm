@@ -624,7 +624,6 @@ package Tester::Smoker {
 
         my $release_id = $args->{release_id};
         my $env_id = $args->{environment};
-        my $perlbuild;
         my $grade;
 
         if (! $release_id) {
@@ -690,7 +689,7 @@ package Tester::Smoker {
         }
 
         my $result = $self->tester->run({module => $module_info->{download_url},
-                                         perl_release => $perlbuild
+                                         perl_release => $pb->{perlbrew}
                                         });
         {
             my $log_msg = 'Test complete, '. $module_info->{name} .' ->';
