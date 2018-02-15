@@ -109,7 +109,7 @@ Lists jobs in state (inactive (*), finished, failed) (*) default\n
         if ($show_defer) {
             # Show queued report jobs which are held for manual release
             # TODO: Combine with 'unfinished' tablify below
-            print Mojo::Util::tablify [ [qw/Job Status Distribution Version Perl Grade/],
+            print Mojo::Util::tablify [ [qw/Job Status Test_ID Distribution Version Perl Grade/],
                                         map {
                                             my $release_id = eval{$_->{args}->[0]->{'release_id'}};
                                             if (defined $release_id) {
@@ -118,9 +118,10 @@ Lists jobs in state (inactive (*), finished, failed) (*) default\n
                                                     ()
                                                 } else {
                                                     [ $_->{id}, $_->{state},
+                                                      eval{$_->{args}->[0]->{test_id}} // '',
                                                       $info->first->@{qw/name version/},
                                                       $_->{notes}->{perl_version} // '',
-                                                      eval{$_->{args}->[0]->{'grade'}} // '(unknown)',
+                                                      eval{$_->{args}->[0]->{grade}} // '(unknown)',
                                                     ]
                                                 }
                                             } else {
@@ -354,13 +355,15 @@ package main::Command::report {
     has 'description' => 'Displays the build log for the given report ID number';
 
     sub run {
-        my ($self, $id) = @_;
+        my ($self, $id, $what) = @_;
 
         die "Must specify report ID" unless defined $id;
 
         my $result = eval { $self->app->db->query('SELECT * FROM tests WHERE id=?',$id)->hashes; };
-        if (defined $result) {
-            print eval{$result->[0]->{build_log}}."\n";
+        if (defined $result && scalar @{$result}) {
+            print ((eval{$result->[0]->{$what // 'report'}} // '(undefined)')."\n");
+        } else {
+            print "No test result found for id=$id\n";
         }
     }
 };

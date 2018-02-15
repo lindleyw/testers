@@ -101,6 +101,34 @@ Optional arguments to update are:
 Unless --distribution or --release is specified, only the latest
 versions of a given distribution will be retrieved.
 
+EXAMPLES:
+
+Testing the latest 20 distributions:
+
+    $ ./smoketest update --count=20
+
+Testing the latest distributions from an author:
+
+    $ ./smoketest update --count=5 --author=PREACTION
+
+Testing the latest 20 distributions on two different Perl versions:
+
+    $ ./smoketest update --count=20 --perl 5.26.1,5.24.1
+
+or, equivalently,
+
+    $ ./smoketest update --count 20 --perl 5.26.1 --perl 5.24.1
+
+Testing a specific distribution:
+
+    $ ./smoketest update --perl 5.26.1,5.24.1 Time::MockTime::HiRes
+
+will enqueue two tests, one for each version of Perl given, on the
+latest version of the Time::MockTime::HiRes distribution.  To re-test
+this distribution after those tests complete, use the --force switch:
+
+    $ ./smoketest update --perl 5.26.1,5.24.1 Time::MockTime::HiRes -f
+
 ---
 
 To display enqueued jobs:
@@ -111,9 +139,17 @@ To display completed jobs:
 
     $ ./smoketest list finished
 
-To display the build log of a completed test, by ID:
+---
 
-    $ ./smoketest report 14
+Useful Minion commands:
+
+Remove a job by ID
+
+    $ ./smoketest minion job --remove 1729
+
+Retry a failed job by ID
+
+    $ ./smoketest minion job --retry 1776
 
 ---
 
@@ -164,14 +200,18 @@ to the CPANTesters API.  By default these jobs are placed in Minion's
 'deferred' queue and must be manually reviewed before being sent.  You
 can list the reports awaiting approval with:
 
+    $ ./smoketest list --report
+
+or, equivalently,
+
     $ ./smoketest list -r
 
 which will emit a list like:
 
-    Job   Status    Distribution                       Version  Perl  Grade
-    1729  inactive  App-abgrep-0.003                   0.003          pass
-    1728  inactive  CSS-DOM-0.17                       0.17           pass
-    1727  inactive  Test-Time-HiRes-0.01               0.01           pass
+    Job   Status    Test_ID  Distribution                       Version  Perl  Grade
+    1729  inactive  17       App-abgrep-0.003                   0.003          pass
+    1728  inactive  18       CSS-DOM-0.17                       0.17           pass
+    1727  inactive  19       Test-Time-HiRes-0.01               0.01           pass
 
 And you can release jobs either as:
 
@@ -181,6 +221,32 @@ which will release the 3 most recent tests, or by specifying job
 numbers:
 
     $ ./smoketest release 1729 1727
+
+To display the report which would be submitted for a completed test,
+by Test ID:
+
+    $ ./smoketest report 17
+
+To display other data about a completed test, by ID:
+
+    $ ./smoketest report 17 build_log
+    $ ./smoketest report 17 grade
+    $ ./smoketest report 17 elapsed_time
+
+where 'build_log' displays the merged (STDOUT and STDERR) build log,
+as opposed to the report prepared for CPAN Testers. To compare those
+two for report 17, you might:
+
+    $ ./smoketest report 17 > /tmp/17.report
+    $ ./smoketest report 17 build_log > /tmp/17.log
+    $ diff -y /tmp/17.report /tmp/17.log | less
+
+Also,
+
+    $ ./smoketest report 17 report_sent
+
+will display "(undefined)" or the time stamp at which a report was
+actually transmitted to CPAN Testers.
 
 ---
 

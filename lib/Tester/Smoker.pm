@@ -614,6 +614,13 @@ package Tester::Smoker {
     ###
 
     sub test {
+        # Given a Minion job,
+        # - Checks against the 'disabled' regex
+        # - Prepares a command-line for cpanm
+        #   using either the system Perl or a Perlbrew setup
+        # - Calls $self->tester->run(...) to actually perform the test
+        # - Saves the report in our local database
+        # - Enqueues a Minion job to transmit the report to CPANTestersAPI
         my ($self, $minion_job, $args) = @_;
         return undef unless (ref $args) eq 'HASH';
 
@@ -683,9 +690,12 @@ package Tester::Smoker {
             $self->log->info($log_msg);
         }
 
+        # Actually run the test
         my $result = $self->tester->run({module => $module_info->{download_url},
                                          perl_release => $pb->{perlbrew}
                                         });
+
+        # Log, upon test completion
         {
             my $log_msg = 'Test complete, '. $module_info->{name} .' ->';
             $log_msg .= ' grade='.$result->{grade} if defined $result->{grade};
@@ -697,7 +707,6 @@ package Tester::Smoker {
 
         # Enqueue the report to be processed and sent later
         $self->log->info("enqueueing Report");
-
         my $test_id = $self->save_test({release => $module_info->{name},
                                         release_id => $release_id,
                                         # hash slice of environment:
@@ -706,15 +715,16 @@ package Tester::Smoker {
                                         %{$result}{qw(build_log report grade test_exit reporter_exit
                                                     start_time elapsed_time)},
                                         environment_id => $env_id,
-                                        # tested_module => $tested_module,
-                                        # minion_job => $minion_job->info->{id},
                                        });
-
+        # Update the Minion notes
         $minion_job->note(test_id => $test_id);
         $minion_job->note(command => $command) if defined $command;
 
+        # Support the possible separate capture of STDERR, in addition
+        # to the merged STDOUT+STDERR.
         my $test_error = $result->{test_exit}->{stderr};
         my @show_error = (defined $test_error) ? (test_error => $test_error) : ();
+
         # With report_queue being other than 'default' the expectation
         # is that an alternate worker will retry each job (later,
         # after user intervention) and change queue to 'default' for
@@ -748,9 +758,6 @@ package Tester::Smoker {
 
     sub get_all_tests {
         my ($self, $test_conditions) = @_;
-        # Points to Ponder:
-        #my $result = eval { $self->sql->db->select(-from => 'tests',
-        #                                           -columns =>
         my $result = eval { $self->sql->db->query("select (select perlbrew from environments where id=environment_id) as perlbrew, (select distribution from releases where id=release_id) as distribution, (select version from releases where id=release_id) as version, datetime(start_time,'unixepoch') as timestamp, elapsed_time, grade from tests;")->hashes; };
         return $result;
     }

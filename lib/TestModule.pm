@@ -156,7 +156,7 @@ sub check_exit {
     my ( $self, $command ) = @_;
 
     my $signal_received;
-    my $stderr;
+    my $merged_output;     # STDOUT, STDERR merged
     my $exit = eval {
 
         # setup to handle signals
@@ -169,7 +169,11 @@ sub check_exit {
         # this one won't work with apostrophes like above
         local $SIG{__DIE__} = sub { $signal_received = "Die" };
 
-	($stderr, my $exit_value) = Capture::Tiny::capture_merged(sub { system($command ); });
+        # TODO: We would really like to create these variables:
+        #   $merged_output    STDOUT+STDERR merged (buffered, mixed) as CPAN Testers expects
+        #   $stderr_only      Just STDERR, useful for quickly finding what went wrong
+        #   $exit_value       from the child process
+	($merged_output, my $exit_value) = Capture::Tiny::capture_merged(sub { system($command ); });
         return $exit_value;
     };
 
@@ -183,7 +187,7 @@ sub check_exit {
     # The below should help decipher these cases.
 
     my $status = {};
-    $status->{stderr} = $stderr if defined $stderr;
+    $status->{merged_output} = $merged_output if defined $merged_output;
     $status->{command} = $command;
     $status->{signal_received} = $signal_received if defined $signal_received;
     return $status if ( !$exit );
