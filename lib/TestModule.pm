@@ -24,6 +24,7 @@ has 'cpanm_test' => 'cpanm --test-only';
 has 'local_lib';    # If set, use '-L' and this to keep test
                     # dependencies separate from the ordinary
                     # installation
+has 'timeout' => 300; # in seconds
 
 sub verify {
     # Do we have a suitable environment for testing?  For now, require
@@ -173,7 +174,19 @@ sub check_exit {
         #   $merged_output    STDOUT+STDERR merged (buffered, mixed) as CPAN Testers expects
         #   $stderr_only      Just STDERR, useful for quickly finding what went wrong
         #   $exit_value       from the child process
-	($merged_output, my $exit_value) = Capture::Tiny::capture_merged(sub { system($command ); });
+
+        my $ALARM_EXCEPTION = "Child Process timed out";
+        my $exit_value;
+        eval {
+            local $SIG{ALRM} = sub { die $ALARM_EXCEPTION };
+            alarm $self->timeout;
+            ($merged_output, $exit_value) =
+                Capture::Tiny::capture_merged(sub { system( $command ); });
+            alarm 0;
+        };
+        alarm 0; # race condition protection
+        if ($@ && $@ =~ quotemeta($ALARM_EXCEPTION)) { $exit_value = -2 }
+
         return $exit_value;
     };
 
@@ -194,6 +207,8 @@ sub check_exit {
 
     if ( $exit == -1 ) {
         $status->{error} = "Failed to execute: $!";
+    } elsif ( $exit == -2 ) {
+        $status->{error} = "Process timed out";
     } elsif ( $exit & 127 ) {
         $status->{error} = sprintf(
                                    "Child died with signal %d, %s coredump",

@@ -443,7 +443,7 @@ helper smoker => sub {
                                         app => $self->app,
                                        );
 
-    foreach my $conf_val (qw(perlbrew cpanm_test local_lib)) {
+    foreach my $conf_val (qw(perlbrew cpanm_test local_lib timeout)) {
         $smoker->tester->$conf_val($self->config->{smoker}->{$conf_val})
           if defined $self->config->{smoker}->{$conf_val};
     }
