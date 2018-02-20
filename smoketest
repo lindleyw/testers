@@ -36,9 +36,16 @@ package main::Command::release {
     use Mojo::Util qw(getopt);
 
     has 'description' => 'Release a currently-enqueued report';
-    has usage => <<"=cut";
+
+=pod
 
 =head2 Release
+
+=cut
+
+    has usage => <<"=cut" =~ s/  APPLICATION/$0/rg =~ s/\s+=pod\s+//rs;
+
+=pod
 
 Usage: APPLICATION release [IDS] [-count N]
 
@@ -81,9 +88,16 @@ package main::Command::list {
     use Mojo::Util qw(getopt);
 
     has 'description' => 'List currently-enqueued tests to be run';
-    has usage => <<"=cut";
+
+=pod
 
 =head2 List
+
+=cut
+
+    has usage => <<"=cut" =~ s/  APPLICATION/$0/rg =~ s/\s+=pod\s+//rs;
+
+=pod
 
 Usage: APPLICATION list [state] [-count N] [-reports]
 
@@ -91,11 +105,20 @@ Lists jobs in state (inactive (*), finished, failed) (*) default\n
 
 To display enqueued jobs:
 
-    APPLICATIOn list
+    APPLICATION list
 
 To display completed jobs:
 
     APPLICATION list finished
+
+To display a list of test reports for completed jobs (these have
+different IDs than jobs):
+
+    APPLICATION list -r
+
+Then to display the actual report, do:
+
+    APPLICATION report TEST_ID
 
 =cut
 
