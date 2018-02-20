@@ -164,6 +164,7 @@ sub check_exit {
     my ( $self, $command ) = @_;
 
     my $signal_received;
+    my $error_output;      # STDERR only
     my $merged_output;     # STDOUT, STDERR merged
     my $exit = eval {
 
@@ -187,8 +188,12 @@ sub check_exit {
         eval {
             local $SIG{ALRM} = sub { die $ALARM_EXCEPTION };
             alarm $self->timeout;
-            ($merged_output, $exit_value) =
-                Capture::Tiny::capture_merged(sub { system( $command ); });
+            ($merged_output, my $e_v) =
+            Capture::Tiny::capture_merged( sub {
+                                               ($error_output, $exit_value) =
+                                               Capture::Tiny::tee_stderr( sub { system( $command ); });
+                                           }
+                                         );
             alarm 0;
         };
         alarm 0; # race condition protection
@@ -210,6 +215,7 @@ sub check_exit {
 
     my $status = { command => $command,
                  };
+    $status->{stderr} = $error_output if defined $error_output;
     $status->{merged_output} = $merged_output if defined $merged_output;
     $status->{signal_received} = $signal_received if defined $signal_received;
     if (! $exit) {

@@ -690,6 +690,7 @@ plugin 'Yancy' => {
                                                                                 readOnly => 1,
                                                                               },
                                                               test_error => { type => ['string','null'],
+                                                                              format => 'textarea',
                                                                               description => 'STDERR from test execution',
                                                                               readOnly => 1,
                                                                             },
