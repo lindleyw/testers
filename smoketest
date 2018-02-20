@@ -88,6 +88,15 @@ package main::Command::list {
 Usage: APPLICATION list [state] [-count N] [-reports]
 
 Lists jobs in state (inactive (*), finished, failed) (*) default\n
+
+To display enqueued jobs:
+
+    APPLICATIOn list
+
+To display completed jobs:
+
+    APPLICATION list finished
+
 =cut
 
     sub run {
@@ -169,14 +178,29 @@ package main::Command::regex {
     use Mojo::Base 'Mojolicious::Command';
 
     has 'description' => 'Retrieves and updates, from metacpan, the cached copy of the regex for disabled modules';
-    has usage => <<"=cut";
+
+=pod
 
 =head2 Regex
 
-Usage: APPLICATION regex [options]
+=cut
 
-Options:
-   -s something
+    has usage => <<"=cut" =~ s/  APPLICATION/$0/rg =~ s/\s+=pod\s+//rs;
+
+=pod
+
+Usage: APPLICATION regex [yaml_file_path_or_URL]
+
+Fetches and saves a YAML file containing a regular expression which
+will either enable or disable modules. Usually only one of these is
+used, namely the most recent 01.DISABLED.yml from CPAN. However, if
+you wish to override some of that behaviour, you may add your own
+regular expressions.  Your enable/disable regular expressions will be
+processed after the default CPAN one.
+
+The ability to manage and rearrange these regular expressions in the
+smoker database is left as an exercise to the student.
+
 =cut
 
     sub run {
@@ -193,6 +217,23 @@ package main::Command::reload {
     use Mojo::Base 'Mojolicious::Command';
 
     has 'description' => 'Reloads the entire list of modules from MetaCPAN';
+
+=pod
+
+=head2 Reload
+
+=cut
+
+    has usage => <<"=cut" =~ s/  APPLICATION/$0/rg =~ s/\s+=pod\s+//rs;
+
+=pod
+
+Usage: APPLICATION reload [options]
+
+Reloads the entire list of current packages from CPAN, usually from
+its 02packages.details.txt file.
+
+=cut
 
     sub run {
         my ($self, @args) = @_;
@@ -211,16 +252,51 @@ package main::Command::update {
     use Mojo::Base 'Mojolicious::Command';
     use Mojo::Util qw(getopt);
 
-    has 'description' => 'Retrieves distribution info from MetaCPAN and enqueues tests';
-    has usage => <<"=cut";
+    has 'description' => 'Retrieves distribution info from MetaCPAN. Enqueues tests.';
+
+=pod
 
 =head2 Update
+
+=cut
+
+    has usage => <<"=cut" =~ s/  APPLICATION/$0/rg =~ s/\s+=pod\s+//rs;
+
+=pod
 
 Usage: APPLICATION update [-v|--verbose] [-count=N] [-force] [-notest] [--distribution=DIST]
                           [--version=N.NN] [--release=N] [--author=N] [--perl_version=N]
                           [--start_date=YYYY-MM-DD] [--end_date=YYYY-MM-DD]
 
 Retrieve a list of Perl module distributions from CPAN.
+
+Examples:
+
+Testing the latest 20 distributions:
+
+    APPLICATION update --count=20
+
+Testing the latest distributions from an author:
+
+    APPLICATION update --count=5 --author=PREACTION
+
+Testing the latest 20 distributions on two different Perl versions:
+
+    APPLICATION update --count=20 --perl 5.26.1,5.24.1
+
+or, equivalently,
+
+    APPLICATION update --count 20 --perl 5.26.1 --perl 5.24.1
+
+Testing a specific distribution:
+
+    APPLICATION update --perl 5.26.1,5.24.1 Time::MockTime::HiRes
+
+will enqueue two tests, one for each version of Perl given, on the
+latest version of the Time::MockTime::HiRes distribution.  To re-test
+this distribution after those tests complete, use the --force switch:
+
+    APPLICATION update --perl 5.26.1,5.24.1 Time::MockTime::HiRes -f
 
 =cut
 

@@ -61,13 +61,15 @@ along with explanatory comments.  The base keys are:
     - the `local_lib` parameter in `smoker`, if set, will append the
       `-L` switch to the cpanm invocation, along with the value given,
       and suffixed with a subdirectory name equal to the version of
-      Perlbrew used for the given test.  This has the effect of
-      isolating the dependencies which cpanm installs even with
-      `--test-only` from each base Perlbrew installation.
+      Perlbrew used for the given test, or 'default' for the default
+      Perl.  This has the effect of isolating the dependencies which
+      cpanm installs (even with `--test-only`) from each base Perlbrew
+      installation.
 
       A `local_lib` value somewhere under `/tmp` for example will
       effectively cache all installed dependent CPAN modules in a
-      place which is usually flushed at system reboot.
+      place which is usually flushed at system reboot, but which
+      remains intact during ongoing testing of multiple packages.
 
 USAGE:
 
@@ -277,6 +279,18 @@ the current CPAN version, in this format, is used.
 
 ---
 
+Possibly useful tests for confidence-building in the Smoker can be
+performed with:
+
+    ./smoketest update -f --dist Acme::CPAN::Testers::PASS
+    ./smoketest update -f --dist Acme::CPAN::Testers::FAIL
+    ./smoketest update -f --dist Acme::CPAN::Testers::NA
+    ./smoketest update -f --dist Acme::CPAN::Testers::UNKNOWN
+    ./smoketest update -f --dist Devel::Fail::Make
+    ./smoketest update -f --dist Devel::Fail::MakeTest
+
+---
+
 NOTE: On running the cpanm-reporter command for first time, it asks a
 bunch of options and then creates its configuration file:
 
@@ -284,4 +298,19 @@ bunch of options and then creates its configuration file:
 
 See CPAN::Testers::Common::Client::Config documentation for more
 details.
+
+---
+
+Debugging note:
+
+This program, as is common with Mojolicious, executes some of its
+components in child processes. Because the Perl debugger can get
+confused with multiple processes, it is desired to have the debugger
+open a seperate GUI window for each of the multiple sub-processes.  A
+misfeature of the Perl debugger itself is that unless the environment
+$TERM variable is set to one of a very few hardwired values, the
+Debugger will disastrously comingle all processes into one I/O
+stream. To avoid this, try e.g.:
+
+   TERM=xterm perl -d ./smoketest do
 

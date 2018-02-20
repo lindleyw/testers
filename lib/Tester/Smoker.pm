@@ -40,7 +40,7 @@ package Tester::Smoker {
     use Email::Address;
     has 'user_email' => sub {
         my ($self) = @_;
-        state $email_from = (Email::Address->parse($self->tester->config->email_from))[0];
+        state $email_from = (Email::Address->parse($self->tester->cpan_config->email_from))[0];
         state $email_hash = (defined $email_from) ?
             {email => $email_from->address, name => $email_from->name} :
             {email => 'NOT CONFIGURED!', name => 'NOT CONFIGURED!'};

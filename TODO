@@ -1,7 +1,14 @@
 TODO
 
-- Configurable timeout.  Revisit TestModule.pm to re-enable this
-  functionality; add a smoketest.conf value for it.
+  NOTE:  Are we doing the right thing, for tests that pass????
+
+  TODO:  Be sure we do NOT send reports with grade=na or timeouts/failure-to-execute
+
+
+
+
+
+
 
 - When release grade is null, in most cases these reports should not
   be submitted.  It means "something went wrong" and that could have
