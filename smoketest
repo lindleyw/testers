@@ -453,6 +453,30 @@ package main::Command::report {
 
     has 'description' => 'Displays the build log for the given report ID number';
 
+=pod
+
+=head2 Report
+
+=cut
+
+    has usage => <<"=cut" =~ s/  APPLICATION/$0/rg =~ s/\s+=pod\s+//rs;
+
+=pod
+
+To display the report which would be submitted for a completed test,
+by Test ID:
+
+    APPLICATION report 17
+
+To display other data about a completed test, by ID:
+
+    APPLICATION report 17 build_log
+    APPLICATION report 17 test_error    # the STDERR log
+    APPLICATION report 17 grade
+    APPLICATION report 17 elapsed_time
+
+=cut
+
     sub run {
         my ($self, $id, $what) = @_;
 

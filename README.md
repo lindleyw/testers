@@ -232,6 +232,7 @@ by Test ID:
 To display other data about a completed test, by ID:
 
     $ ./smoketest report 17 build_log
+    $ ./smoketest report 17 test_error    # the STDERR log
     $ ./smoketest report 17 grade
     $ ./smoketest report 17 elapsed_time
 
