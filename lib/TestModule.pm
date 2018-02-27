@@ -128,13 +128,22 @@ CONFIG
                                                  /^${temp_dir_name}   # directory name at start
                                                   \W+                 # path delimiter
                                                   (\w+)\.             # grade
-                                                  .*\.                # module name and build_env stuff
+                                                  (.*)\.              # module name and build_env stuff
                                                   (\d+)\.(\d+)        # timestamp.pid
                                                   \.rpt\z/x # trailing extension
-                                                  ? ( $_, $1 ) : (); # filename and grade
+                                                  ? ( $_, $1 ) : ();  # filename and grade
                                              }
                                             );
 
+        # XXX In the case of modules which also install and test
+        # dependencies, we may be finding multiple report files?  The
+        # result seems to be a report file which does not match the
+        # module we *thought* we were testing. This needs further
+        # investigation. -- wl 2018-02-07
+        {
+            use Data::Dumper;
+            print STDERR "Report files:\n". Dumper($report_file)."\n";
+        }
         if ( $report_file->size ) {           # Report file exists.  Extract grade and contents.
             $report_filename = $report_file->[0]->to_string;
             $grade           = $report_file->[1];
@@ -148,6 +157,7 @@ CONFIG
             success => 1,                      # Completed, although possibly with errors
             build_log => $build_file->slurp,   # …from above
             report    => $report_contents,
+            report_filename => $report_filename,
             length($error) ? ( error => $error ) : (),
             grade => $grade,
             test_exit => $test_exit,

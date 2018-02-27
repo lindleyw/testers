@@ -77,3 +77,7 @@ CREATE TABLE tests (
 -- 2 up
 
 ALTER TABLE releases ADD COLUMN distribution TEXT;      -- e.g., 'Mojo::Pg'
+
+-- 3 up
+
+ALTER TABLE tests ADD COLUMN report_filename TEXT;      -- TO check against the module we thought we were testing

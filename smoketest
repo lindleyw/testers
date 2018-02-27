@@ -409,13 +409,31 @@ this distribution after those tests complete, use the --force switch:
 
 ################################################################
 
-# Force immediate in-this-thread execution of Minion jobs
-# compare:   $ ./smoketest minion worker
-
 package main::Command::do {
     use Mojo::Base 'Mojolicious::Command';
 
     has 'description' => 'Run any enqueued tests immediately, without using Minion workers';
+
+=pod
+
+=head2 Do
+
+=cut
+
+    has usage => <<"=cut" =~ s/  APPLICATION/$0/rg =~ s/\s+=pod\s+//rs;
+
+=pod
+
+Force immediate in-this-thread execution of Minion jobs
+
+Compare to:
+
+    APPLICATION minion worker
+
+which starts a Minion worker daemon to process jobs, potentially
+running multiple jobs simultaneously.
+
+=cut
 
     sub run {
         my ($self) = @_;
@@ -433,6 +451,20 @@ package main::Command::rebuild {
     use Mojo::Base 'Mojolicious::Command';
 
     has 'description' => 'Discard the entire testing database and rebuild its structure.';
+
+=pod
+
+=head2 Rebuild
+
+=cut
+
+    has usage => <<"=cut" =~ s/  APPLICATION/$0/rg =~ s/\s+=pod\s+//rs;
+
+=pod
+
+    APPLICATION rebuild
+
+=cut
 
     sub run {
       my ($self) = @_;
@@ -499,6 +531,19 @@ package main::Command::compare {
 
     has 'description' => 'Compares local distribution test results with those on cpantesters.org';
 
+=pod
+
+=head2 Compare
+
+=cut
+
+    has usage => <<"=cut" =~ s/  APPLICATION/$0/rg =~ s/\s+=pod\s+//rs;
+
+=pod
+
+    APPLICATION compare
+
+=cut
     sub run {
         my ($self, @args) = @_;
 

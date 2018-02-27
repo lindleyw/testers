@@ -699,7 +699,8 @@ package Tester::Smoker {
         {
             my $log_msg = 'Test complete, '. $module_info->{name} .' ->';
             $log_msg .= ' grade='.$result->{grade} if defined $result->{grade};
-            $log_msg .= ' elapsed time='. $result->{elapsed_time} if defined $result->{elapsed_time};
+            $log_msg .= ' elapsed_time='. $result->{elapsed_time} if defined $result->{elapsed_time};
+            $log_msg .= ' report_filename='. $result->{report_filename} if defined $result->{report_filename};
             $log_msg .= ' ...Error='.$result->{test_exit}->{error} if defined $result->{test_exit}->{error};
             $self->log->info($log_msg);
             $minion_job->finish($log_msg);
@@ -713,7 +714,7 @@ package Tester::Smoker {
                                         %{$pb}{qw(host perlbrew platform perl osname osvers)},
                                         # and of result
                                         %{$result}{qw(build_log report grade test_exit reporter_exit
-                                                    start_time elapsed_time)},
+                                                    start_time elapsed_time report_filename)},
                                         environment_id => $env_id,
                                        });
         # Update the Minion notes
