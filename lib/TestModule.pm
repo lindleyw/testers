@@ -128,10 +128,15 @@ CONFIG
                                                  /^${temp_dir_name}   # directory name at start
                                                   \W+                 # path delimiter
                                                   (\w+)\.             # grade
-                                                  (.*)\.              # module name and build_env stuff
+                                                  (.*)\.              # module name, module version, arch, os name, os version
                                                   (\d+)\.(\d+)        # timestamp.pid
                                                   \.rpt\z/x # trailing extension
-                                                  ? ( $_, $1 ) : ();  # filename and grade
+                                                  ? ( { report_file => $_,
+                                                        grade => $1,
+                                                        mixed_module => $2, # need to separate this further
+                                                        timestamp => $3,
+                                                        pid => $4,
+                                                        } ) : ();  # filename and grade
                                              }
                                             );
 
@@ -144,6 +149,7 @@ CONFIG
             use Data::Dumper;
             print STDERR "Report files:\n". Dumper($report_file)."\n";
         }
+        ; $DB::single = 1;
         if ( $report_file->size ) {           # Report file exists.  Extract grade and contents.
             $report_filename = $report_file->[0]->to_string;
             $grade           = $report_file->[1];
