@@ -971,17 +971,18 @@ app->minion->add_task ( report => sub { my ($job, @args) = @_;
 
                                         # TODO: If queue is 'deferred': ...?
 
-                                        my $test_release_id = $args[0]->{release_id};
+                                        my $test_release_id = $args[0]->{test_id};
                                         my $test = $job->app->smoker->report_for($test_release_id)
                                           if defined $test_release_id;
-                                        my $test_json = $job->app->smoker->testersdb->report_json($test);
+                                        my $test_json = $job->app->smoker->testersdb->report_json($test)
+                                          if defined $test;
                                         my $result = $job->app->smoker->testersdb->submit_report($test_json)
                                           if defined $test_json;
 
                                         if (defined $result) {
                                             $job->finish($result);
                                         } else {
-                                            $job->fail({error => 'Failed to submit report', %{$result}})
+                                            $job->fail({error => 'Failed to submit report', %{$result} // " test_id=$test_release_id"})
                                         }
                                     }
                       );

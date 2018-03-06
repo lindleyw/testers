@@ -57,6 +57,12 @@ package CPAN::TestersDB {
         my $ua = Mojo::UserAgent->new();
         my $source_url = Mojo::URL->new($self->config->{submit_url});
 
+        if ($test_json->{result}->{grade} !~ /^(pass|fail|na)/) {
+            $self->log->info("Skipping report (".$test_json->{distribution}->{name}.'-'.$test_json->{distribution}->{version}.
+                             "): unknown grade=" . $test_json->{result}->{grade});
+            return;
+        }
+
         my $result = eval { $ua->max_redirects(5)->post($source_url,
                                                        json => $test_json); };
         # $DB::single = 1;

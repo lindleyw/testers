@@ -697,11 +697,14 @@ package Tester::Smoker {
 
         # Log, upon test completion
         {
-            my $log_msg = 'Test complete, '. $module_info->{name} .' ->';
+            my $log_msg = 'Test ';
+            $log_msg .= ($result->{success} ? 'complete' : 'aborted') . ', ';
+            $log_msg .= $module_info->{name} .' ->';
             $log_msg .= ' grade='.$result->{grade} if defined $result->{grade};
             $log_msg .= ' elapsed_time='. $result->{elapsed_time} if defined $result->{elapsed_time};
             $log_msg .= ' report_filename='. $result->{report_filename} if defined $result->{report_filename};
-            $log_msg .= ' ...Error='.$result->{test_exit}->{error} if defined $result->{test_exit}->{error};
+            $log_msg .= ' test_error='.$result->{test_exit}->{error} if defined $result->{test_exit}->{error};
+            $log_msg .= ' error='.$result->{error} if defined $result->{error};
             $self->log->info($log_msg);
             $minion_job->finish($log_msg);
         }

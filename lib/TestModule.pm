@@ -57,7 +57,6 @@ sub run {
     my $module       = $params->{module};
     my $perl_release = $params->{perl_release};
     my $error        = '';
-    my ( $report_filename, $report_contents, $grade );
     my $reporter_exit;
 
     # next two variable settings are explained in this link
@@ -92,6 +91,10 @@ sub run {
     # the 'transport' setting in config.ini, which we override below
     local $ENV{CPANM_REPORTER_HOME} = $temp_dir_name;
 
+    my %reports;   # a hash with key being the module name
+    $module =~ m{^.*/(.*?)-\d+\.};    # The intended distribution (unit under test)
+    my $dist_uut = $1;
+
     if ($test_exit->{finished}) {
         # Create a config.ini with our settings, to be used by both
         # cpanreporter and cpanm-reporter; set env to force its use
@@ -122,55 +125,75 @@ CONFIG
         # ${temp_dir_name}/work/{timestamp}.{pid}/build.log
         my $test_results = Mojo::File->new($temp_dir_name)->list_tree;
 
-        # Find the report file.  Extract the complete filename and the result (e.g., 'fail').
-        my $report_file = $test_results->map(
-                                             sub {
-                                                 /^${temp_dir_name}   # directory name at start
-                                                  \W+                 # path delimiter
-                                                  (\w+)\.             # grade
-                                                  (.*)\.              # module name, module version, arch, os name, os version
-                                                  (\d+)\.(\d+)        # timestamp.pid
-                                                  \.rpt\z/x # trailing extension
-                                                  ? ( { report_file => $_,
-                                                        grade => $1,
-                                                        mixed_module => $2, # need to separate this further
-                                                        timestamp => $3,
-                                                        pid => $4,
-                                                        } ) : ();  # filename and grade
-                                             }
-                                            );
+        # There will be only one $build_file, which is the log of the
+        # entire process. However there may be several report file(s),
+        # if dependencies were also installed. Find the report file
+        # which matches the module we wished to test, and, extract the
+        # complete filename and the result (e.g., 'fail').
+        my $reports = $test_results->map(
+                                         sub {
+                                             /^${temp_dir_name}   # directory name at start
+                                              \W+                 # path delimiter
+                                              (\w+)\.             # grade
+                                              (.*)\.              # module name, module version, arch, os name, os version
+                                              (\d+)\.(\d+)        # timestamp.pid
+                                              \.rpt\z/x # trailing extension
+                                              ? ( { file => $_,
+                                                    grade => $1,
+                                                    mixed_module => $2, # need to separate this further
+                                                    timestamp => $3,
+                                                    pid => $4,
+                                                  } ) : ();  # filename and grade
+                                         }
+                                        );
 
-        # XXX In the case of modules which also install and test
-        # dependencies, we may be finding multiple report files?  The
-        # result seems to be a report file which does not match the
-        # module we *thought* we were testing. This needs further
-        # investigation. -- wl 2018-02-07
-        {
-            use Data::Dumper;
-            print STDERR "Report files:\n". Dumper($report_file)."\n";
-        }
-        ; $DB::single = 1;
-        if ( $report_file->size ) {           # Report file exists.  Extract grade and contents.
-            $report_filename = $report_file->[0]->to_string;
-            $grade           = $report_file->[1];
-            if ( -e $report_filename ) {
-                $report_contents = Mojo::File->new($report_filename)->slurp;
+        # now we do something with $report_file->[0]->{mixed_module} =~ /^(.*?)-\d+\./;
+        foreach my $r (@{$reports}) {
+            $r->{mixed_module} =~ /^(.*?)-\d+\./;
+            my $this_dist = $1;
+            if (!defined $this_dist) {
+                $self->log->warn("Can't determine module tested for ".$r->{mixed_module});
+                next;
             }
+            my $report_text;
+            if (-e $r->{file}->to_string) {
+                $report_text = report => $r->{file}->slurp;
+            }
+            $reports{$this_dist} = { file => $r->{file}->to_string,
+                                     grade => $r->{grade},
+                                     report => $report_text,
+                                   };
         }
     }
 
-    return {
-            success => 1,                      # Completed, although possibly with errors
-            build_log => $build_file->slurp,   # …from above
-            report    => $report_contents,
-            report_filename => $report_filename,
-            length($error) ? ( error => $error ) : (),
-            grade => $grade,
-            test_exit => $test_exit,
-            reporter_exit => $reporter_exit,
-            start_time => $start_time[0],
-            elapsed_time => $elapsed_time,
-    };
+    if (defined $reports{$dist_uut}) {         # We actually attempted to install the desired module
+        return {
+                success => 1, # Completed, although possibly with errors
+                build_log => $build_file->slurp, # …from above
+                report    => $reports{$dist_uut}->{report},
+                report_filename => $reports{$dist_uut}->{file},
+                grade => $reports{$dist_uut}->{grade},
+                length($error) ? ( error => $error ) : (),
+                test_exit => $test_exit,
+                reporter_exit => $reporter_exit,
+                start_time => $start_time[0],
+                elapsed_time => $elapsed_time,
+               };
+    } else {
+        return {
+                success => 0,
+                build_log => $build_file->slurp, # …from above
+                grade => 'aborted',
+                error => 'Module not tested, because dependency installation failed.',
+                test_exit => $test_exit,
+                report => join("\n",
+                               "Dependent modules and grades:",
+                               map { join(':  ',$_, $reports{$_}->{grade}) } sort keys %reports
+                              ),
+                start_time => $start_time[0],
+                elapsed_time => $elapsed_time,
+               };
+    }
 }
 
 sub check_exit {
