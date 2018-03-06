@@ -730,9 +730,9 @@ package Tester::Smoker {
         my @show_error = (defined $test_error) ? (test_error => $test_error) : ();
 
         # With report_queue being other than 'default' the expectation
-        # is that an alternate worker will retry each job (later,
-        # after user intervention) and change queue to 'default' for
-        # actual submission
+        # is that an alternate worker will retry or requeue each job
+        # (later, after user intervention) and change queue to
+        # 'default' for actual submission
         $minion_job->minion->enqueue(report => [{test_id => $test_id,
                                                  release_id => $release_id,
                                                  %{$result}{qw(grade)},
