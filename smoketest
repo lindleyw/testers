@@ -446,8 +446,9 @@ this distribution after those tests complete, use the --force switch:
           @perl_test_versions = ($self->app->smoker->get_environment({id => $self->app->smoker->my_environment()}));
         }
         # Enqueue tests for each of those releases.
+        my $added = 0;
         if (defined $releases && !$skip_tests) {
-          $self->app->log->info('Enqueueing ' . $releases->size . ' releases') if $verbose;
+          $self->app->log->info('Considering ' . $releases->size . ' releases') if $verbose;
           $releases->each(sub {
                             my $id = $_->{id};
                             # TODO: Move below into separate routine
@@ -477,9 +478,11 @@ this distribution after those tests complete, use the --force switch:
                                                                 {notes => {module_info => $_,
                                                                            perl_version => ($v->{perlbrew} // $v->{perl})
                                                                           }});
+                                    $added++;
                                 }
                             }
                         });
+          $self->app->log->info("Releases added: $added");
       }
 
     }
