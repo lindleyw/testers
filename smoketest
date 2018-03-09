@@ -556,6 +556,7 @@ package main::Command::rebuild {
                                           log      => $self->app->log,
                                           rebuild  => 1,
                                          );
+      $self->app->minion->reset;    # Also clear the Minion job queue
     }
 };
 
@@ -619,14 +620,14 @@ To display the last several reports (defaults to 50):
                                                          -limit => $count // 50,
                                                        )->hashes; };
             if (defined $reports && scalar @{$reports}) {
-                print Mojo::Util::tablify [ [qw/Report_ID Distribution Version Perl Runtime Grade Sent/],
+                print Mojo::Util::tablify [ [qw/Report_ID Distribution Version Release_Date Perl Runtime Grade Sent/],
                                         map {
                                             my $info = $self->app->smoker->get_release_info({id => $_->{release_id}});
                                             if (!defined $info || !$info->size) {
                                                 ()
                                             } else {
                                                 [ $_->{id},
-                                                  $info->first->@{qw/name version/},
+                                                  $info->first->@{qw/name version released/},
                                                   $_->{notes}->{perl_version} // '',
                                                   sprintf('%8.2f',$_->{elapsed_time}),
                                                   eval{$_->{args}->[0]->{grade}} // '(unknown)',

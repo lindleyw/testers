@@ -322,8 +322,11 @@ package CPAN::Wrapper {
 
     sub _date_range {
         my ($start, $end) = @_;
-        if (defined $start && defined $end) {
-            return ( range => { date => { gte => $start, lte => $end } } );
+        my @limits;
+        push @limits, gte => $start if defined $start;
+        push @limits, lte => $end if defined $end;
+        if (scalar @limits) {
+            return ( range => { date => { @limits } } );
         }
         return ('match_all' => {});   # populate 'query' with this
     }
@@ -338,7 +341,6 @@ package CPAN::Wrapper {
         my $ua = Mojo::UserAgent->new();
         my $source_url;
         my $hits=[];
-
 
         $source_url = $self->config->{metacpan}->{release}; # API endpoint;
         # NOTE: For a Release,
@@ -380,7 +382,6 @@ package CPAN::Wrapper {
         # NOTE: Above could request $module->{fields}->{provides}
         # which would contain a list of provided (sub)modules
 
-        # print STDERR Mojo::JSON::encode_json($req) . "\n";
         my $modules = $ua->post($source_url => json => $req)->result;
         my $module_list = defined ($modules) ? Mojo::JSON::decode_json($modules->body) : {};
 
