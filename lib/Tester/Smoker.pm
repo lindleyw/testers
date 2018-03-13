@@ -665,6 +665,9 @@ package Tester::Smoker {
         ### http://www.dagolden.com/index.php/2098/the-annotated-lancaster-consensus
         local $ENV{NONINTERACTIVE_TESTING} = 1;
         local $ENV{AUTOMATED_TESTING}      = 1;
+        # Permit testing Mojolicious inside a Mojo environment:
+        local $ENV{MOJO_EXE} = undef;
+        local $ENV{MOJO_CONFIG} = undef;
 
         # Test the specific version we asked for
         my $command;
