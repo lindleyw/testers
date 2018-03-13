@@ -111,7 +111,7 @@ package main::Command::remove {
 
 Usage: APPLICATION remove [IDS] [-count N]
 
-Releases one or more report jobs by ID, or from newest by count
+Removes one or more enqueued Minion jobs by ID, or from newest by count
 =cut
 
     sub run {
@@ -136,7 +136,6 @@ Releases one or more report jobs by ID, or from newest by count
             $self->app->log->info("No jobs found to remove");
         }
         foreach my $id (@ids) {
-            # ; $DB::single = 1;
             my $job = $self->app->minion->job($id);
             if (defined $job) {
                 if ($job->remove) {
