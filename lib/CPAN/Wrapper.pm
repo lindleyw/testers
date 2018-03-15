@@ -30,70 +30,6 @@ package CPAN::Wrapper {
         return $CPAN::VERSION;
     }
 
-    # TODO: Consider adding:
-    # use CPAN::Reporter::History;
-    # NOTE: have_tested() returns a list of hashes, e.g.,
-    # 0  HASH(0x4070958)
-    #    'archname' => 'x86_64-linux'
-    #    'dist' => 'Acme-CPAN-Testers-FAIL-0.02'
-    #    'grade' => 'FAIL'
-    #    'osvers' => '4.4.0-63-generic'
-    #    'perl' => '5.26.0'
-    #    'phase' => 'test'
-    # You can optionally pass one or more key/value pairs to match against.
-
-    if (0) {
-    # # TODO:
-    # # Consider this code from App::cpanminus::reporter --
-    #   my $cpanm_version = $self->{_cpanminus_version} || 'unknown cpanm version';
-    #   my $meta = $self->get_meta_for( $dist );
-    #   my $client = CPAN::Testers::Common::Client->new(
-    #                                                   author      => $self->author,
-    #                                                   distname    => $dist,
-    #                                                   grade       => $result,
-    #                                                   via         => "App::cpanminus::reporter $VERSION ($cpanm_version)",
-    #                                                   test_output => join( '', @test_output ),
-    #                                                   prereqs     => ($meta && ref $meta) ? $meta->{prereqs} : undef,
-    #                                                  );
-
-    #   if (!$self->skip_history && $client->is_duplicate) {
-    #     print "($resource, $author, $dist, $result) was already sent. Skipping...\n"
-    #       if $self->verbose;
-    #     return;
-    #   } else {
-    #     print "sending: ($resource, $author, $dist, $result)\n" unless $self->quiet;
-    #   }
-
-    #   my $reporter = Test::Reporter->new(
-    #                                      transport      => $self->config->transport_name,
-    #                                      transport_args => $self->config->transport_args,
-    #                                      grade          => $client->grade,
-    #                                      distribution   => $dist,
-    #                                      distfile       => $self->distfile,
-    #                                      from           => $self->config->email_from,
-    #                                      comments       => $client->email,
-    #                                      via            => $client->via,
-    #                                     );
-      # if ($self->dry_run) {
-      #   print "not sending (drun run)\n" unless $self->quiet;
-      #   return;
-      # }
-
-      # try {
-      #   $reporter->send() || die $reporter->errstr();
-      # }
-      #   catch {
-      #     print "Error while sending this report, continuing with the next one...\n" unless $self->quiet;
-      #     print "DEBUG: @_" if $self->verbose;
-      #   } finally{
-      #     $client->record_history unless $self->skip_history;
-      #   };
-
-    }
-
-
-
-
 
     ################################################################
     #
@@ -134,7 +70,7 @@ package CPAN::Wrapper {
     # dists and use that to refresh the disabled list
 
     # When download_url is 'A/AN/ANDK/CPAN-2.16.tar.gz' name is CPAN,
-    # version is 2.16 -- Fetch
+    # and version is 2.16 -- so we fetch:
     # https://st.aticpan.org/source/ANDK/CPAN-2.16/distroprefs/01.DISABLED.yml
 
     sub disabled_regex_url {
@@ -486,18 +422,73 @@ package CPAN::Wrapper {
                  regex => $matchfile->{match}{distribution}
                };
     }
-
-
-
-
-    # XXX: This was an alternate way to capture cpanm output.
-    # use Capture::Tiny ':all';
-
-
-
-
-
-
 };
 
 1;
+
+__END__
+
+    # TODO: Consider adding:
+    # use CPAN::Reporter::History;
+    # NOTE: have_tested() returns a list of hashes, e.g.,
+    # 0  HASH(0x4070958)
+    #    'archname' => 'x86_64-linux'
+    #    'dist' => 'Acme-CPAN-Testers-FAIL-0.02'
+    #    'grade' => 'FAIL'
+    #    'osvers' => '4.4.0-63-generic'
+    #    'perl' => '5.26.0'
+    #    'phase' => 'test'
+    # You can optionally pass one or more key/value pairs to match against.
+
+
+
+    if (0) {
+	# # TODO:
+	# # Consider this code from App::cpanminus::reporter --
+	#   my $cpanm_version = $self->{_cpanminus_version} || 'unknown cpanm version';
+	#   my $meta = $self->get_meta_for( $dist );
+	#   my $client = CPAN::Testers::Common::Client->new(
+	#                                                   author      => $self->author,
+	#                                                   distname    => $dist,
+	#                                                   grade       => $result,
+	#                                                   via         => "App::cpanminus::reporter $VERSION ($cpanm_version)",
+	#                                                   test_output => join( '', @test_output ),
+	#                                                   prereqs     => ($meta && ref $meta) ? $meta->{prereqs} : undef,
+	#                                                  );
+
+	#   if (!$self->skip_history && $client->is_duplicate) {
+	#     print "($resource, $author, $dist, $result) was already sent. Skipping...\n"
+	#       if $self->verbose;
+	#     return;
+	#   } else {
+	#     print "sending: ($resource, $author, $dist, $result)\n" unless $self->quiet;
+	#   }
+
+	#   my $reporter = Test::Reporter->new(
+	#                                      transport      => $self->config->transport_name,
+	#                                      transport_args => $self->config->transport_args,
+	#                                      grade          => $client->grade,
+	#                                      distribution   => $dist,
+	#                                      distfile       => $self->distfile,
+	#                                      from           => $self->config->email_from,
+	#                                      comments       => $client->email,
+	#                                      via            => $client->via,
+	#                                     );
+	# if ($self->dry_run) {
+	#   print "not sending (dry run)\n" unless $self->quiet;
+	#   return;
+	# }
+
+	# try {
+	#   $reporter->send() || die $reporter->errstr();
+	# }
+	#   catch {
+	#     print "Error while sending this report, continuing with the next one...\n" unless $self->quiet;
+	#     print "DEBUG: @_" if $self->verbose;
+	#   } finally{
+	#     $client->record_history unless $self->skip_history;
+	#   };
+
+    }
+
+
