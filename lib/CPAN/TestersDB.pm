@@ -5,7 +5,6 @@ use warnings;
 ###
 ### TODO: Think of an actual name for this.
 
-
 package CPAN::TestersDB {
 
     use Mojo::Base '-base';
