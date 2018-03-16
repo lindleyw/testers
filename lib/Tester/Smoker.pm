@@ -30,6 +30,8 @@ package Tester::Smoker {
     has 'report_queue' => 'deferred'; # Default to deferring reports.
                                       # 'default' will cause them to
                                       # be dequeued.
+    my $env_table = 'environments';
+    my $release_table = 'releases';
 
     use TestModule;
     has 'tester' => sub {
@@ -122,14 +124,11 @@ package Tester::Smoker {
                          %Config{qw(osname osvers archname)},  # hash slice
                          perl => $Config{version},
                         };
-        my $env = eval { $self->sql->db->select(-from => 'environments',
-                                                -columns => ['id'],
-                                                -where => $my_config)->hashes; };
+        my $env = eval { $self->sql->db->select($env_table, ['id'], $my_config)->hashes; };
         if (defined $env && $env->size) {
             return $env->first->{id};
         } else {
-            return eval { $self->sql->db->insert(-into => 'environments',
-                                                 -values => $my_config)->last_insert_id;
+            return eval { $self->sql->db->insert($env_table, $my_config)->last_insert_id;
                       };
         }
     }
@@ -145,16 +144,12 @@ package Tester::Smoker {
         } else {
             foreach my $v (@perl_versions) {
                 my $id = eval {
-                    $self->sql->db->query('INSERT INTO environments(host, perlbrew) VALUES (?,?)',
-                                          hostname(), $v)->last_insert_id;
+                    $self->sql->db->insert($env_table, {host => hostname(), perlbrew => $v })->last_insert_id;
                 };
                 if (!defined $id) {
-                    $id = eval{$self->sql->db->select(-from => 'environments',
-                                                      -columns => 'id',
-                                                      -where => { host => hostname(),
-                                                                  perlbrew => $v
-                                                                }
-                                                     )->hashes->first->{id}};
+                    $id = eval{$self->sql->db->select($env_table, ['id'], { host => hostname(), perlbrew => $v})
+                               ->hashes->first->{id}
+                           };
                 }
                 if (!defined $id) {
                     $self->log->error("Cannot add perl version $v");
@@ -172,18 +167,18 @@ package Tester::Smoker {
                 if ($version_specific =~ /===\s+(.*?)\s*\z/s) {
                     my $version_info = {split /\n/, $1};
                     eval {
-                        $self->sql->db->update( -table => 'environments',
-                                                -set => { $version_info->%{qw(osname osvers archname)}, # hash slice
-                                                          perl => $version_info->{version},
-                                                        },
-                                                -where => { id => $id }
+                        $self->sql->db->update( $env_table,
+                                                { $version_info->%{qw(osname osvers archname)}, # hash slice
+                                                  perl => $version_info->{version},
+                                                },
+                                                { id => $id }
                                               );
                     };
                 } else {
                     # Attempting to `perlbrew exec --with` an
                     # alias, results in no output (not even an
                     # error!)  so, "Don't do that."
-                    eval { $self->sql->db->query('DELETE FROM environments WHERE id=?',$id); };
+                    eval { $self->sql->db->delete($env_table, {id => $id}); };
                 }
             }
         }
@@ -242,8 +237,7 @@ package Tester::Smoker {
         return undef unless defined $regex_list;
 
         my $module_info = eval {
-            $self->sql->db->select(-from => 'releases',
-                                   -where => {id => {-in => $module_id}},
+            $self->sql->db->select($release_table, undef, {id => {-in => $module_id}},
                                    # ok for scalar or arrayref
                                   )->hashes;
         };
@@ -265,9 +259,9 @@ package Tester::Smoker {
                                                   }
                                                 });
                               # Save final enabled/disabled status
-                              eval { $self->sql->db->update(-table => 'releases',
-                                                            -set => { disabled_by => $disabled_by },
-                                                            -where => { id => $module_id });
+                              eval { $self->sql->db->update($release_table,
+                                                            { disabled_by => $disabled_by },
+                                                            { id => $module_id });
                                      $self->log->info("Module $_->{name} disabled by regex")
                                        if defined $disabled_by;
                                    };
@@ -289,9 +283,7 @@ package Tester::Smoker {
         my ($self, $release_id) = @_;
         $self->check_regex(release_id => $release_id);
         my $check = eval {
-          $self->sql->db->select(-from => 'releases',
-                                 -columns => 'disabled_by',
-                                 -where => {id => $release_id})->hashes->first;
+          $self->sql->db->select($release_table, ['disabled_by'], {id => $release_id})->hashes->first;
         };
         return defined $check ? $check->{disabled_by} : undef;
     }
@@ -302,10 +294,7 @@ package Tester::Smoker {
       # Retrieves environment information
       my ($self, $where) = @_;
       my $results = eval {
-        $self->sql->db->select(-from => 'environments',
-                               -where => $where,
-                               -limit => 1,
-                              )->hashes->first;
+        $self->sql->db->select($env_table, undef, $where, {-limit => 1})->hashes->first;
       };
       return $results;
     }
@@ -315,12 +304,13 @@ package Tester::Smoker {
     sub get_release_info {
       # Retrieves the latest information for a module
       # TODO: rename to get_release_info
-      my ($self, $where, $limit) = @_;
+        my ($self, $where, $limit) = @_;
+        ; $DB::single = 1;
       my $results = eval {
-        $self->sql->db->select(-from => 'releases',
-                               -where => $where,
-                               -limit => $limit // 1,
-                               -order_by => ['-released'])->hashes;
+        $self->sql->db->select($release_table, undef, $where,
+                               { -limit => $limit // 1,
+                                 -order_by => ['-released'],
+                               })->hashes;
       };
       return $results;
     }
@@ -367,18 +357,17 @@ package Tester::Smoker {
 
         if (defined $releases) {
             $releases->each(sub {
-                                $_->{id} = eval {$self->sql->db->insert(-into => 'releases',
-                                                                        -values => {%$_{qw(name version
-                                                                                           author download_url)},
-                                                                                    distribution => $_->{main_module},
-                                                                                    # MetaCPAN has 'date' in Postgres time format
-                                                                                    released => $_->{date} =~ s/T/ /r,
-                                                                                   },
+                                $_->{id} = eval {$self->sql->db->insert($release_table,
+                                                                        {%$_{qw(name version author download_url)},
+                                                                         distribution => $_->{main_module},
+                                                                         # MetaCPAN has 'date' in Postgres time format
+                                                                         released => $_->{date} =~ s/T/ /r,
+                                                                        },
                                                                        )->last_insert_id;
                                              };
                                 if (!defined $_->{id}) {  # Probably already existed
-                                    $_->{id} = eval { my $g = $self->sql->db->select(-from => 'releases',
-                                                                                     -where => {%$_{qw(name version)}});
+                                    $_->{id} = eval { my $g = $self->sql->db->select($release_table, undef,
+                                                                                     {%$_{qw(name version)}});
                                                       $g->hashes->first->{id};
                                                   };
                                 }
@@ -422,9 +411,9 @@ package Tester::Smoker {
 
         # Choose only filled arguments: defined scalars, and non-empty arrays.
         my $picked_args = {  $args->%{grep { ref $args->{$_} eq 'ARRAY' ? scalar @{$args->{$_}} : defined $args->{$_} } keys %{$args}}  };
-        my $results = eval { $self->sql->db->select( -from => 'releases',
-                                                     -where => $picked_args,
-                                                     -order_by => [qw(distribution author)],
+        my $results = eval { $self->sql->db->select( $release_table, undef,
+                                                     $picked_args,
+                                                     {-order_by => [qw(distribution author)]},
                                                    );
                          };
         return $results->hashes if defined $results; # a Mojo::Collection
@@ -527,12 +516,12 @@ package Tester::Smoker {
         # distribution by name will always give us the latest version
 
         # TODO: use $self->get_module_info() instead of db query here
-        $self->app->db->select( -from => 'releases',
-                                -columns => ['id'],
-                                -where => { _pick ( $mod_info,
-                                                    qw(name version) ) },
-                                -order_by => ['-added'],
-                                -limit => 1 )->hash->{id};
+        $self->app->db->select( $release_table,
+                                ['id'],
+                                { _pick ( $mod_info, qw(name version) ) },
+                                { -order_by => ['-added'],
+                                  -limit => 1
+                                })->hash->{id};
       };
       $self->smoker->minion->enqueue('test', [{ dist_id => $release_id,
                                                env_id => $mod_info->{environment_id}
@@ -547,18 +536,18 @@ package Tester::Smoker {
       #   _find_recent($self,{added => {'>',\["datetime('now', ?)", '-21 day']}})
 
       my $releases =
-        $self->app->db->select( -from => 'releases',
+        $self->app->db->select( $release_table,
                                 # grouping by name after selecting max(added)
                                 # guarantees we get the most-recently-added version
                                 # for each module name
-                                -columns => ['id', 'name', 'max(added) as added'],
-                                -where => { _pick ( $mod_info,
-                                                    qw(name version author added) ),
-                                            disabled_by => undef, # not disabled
-                                          },
-                                -group_by => ['name'],
-                                -order_by => ['-added'], # most-recent first
-                                (defined $limit) ? (-limit => $limit) : (),
+                                ['id', 'name', 'max(added) as added'],
+                                { _pick ( $mod_info, qw(name version author added) ),
+                                  disabled_by => undef, # not disabled
+                                },
+                                { -group_by => ['name'],
+                                  -order_by => ['-added'], # most-recent first
+                                  (defined $limit) ? (-limit => $limit) : (),
+                                },
                               );
       return $releases->hashes; # as a Mojo::Collection
     }
@@ -635,9 +624,7 @@ package Tester::Smoker {
             return 0;
         }
 
-        my $module_info = $self->sql->db->select(-from => 'releases',
-                                                 -where => {id => $release_id}
-                                                )->hashes;
+        my $module_info = $self->sql->db->select($release_table, undef, {id => $release_id})->hashes;
         return 0 unless defined $module_info;
         $module_info = $module_info->first;
 
@@ -679,8 +666,7 @@ package Tester::Smoker {
              $env_id = $self->my_environment();
         }
         # Describe that environment
-        my $pb = eval { $self->sql->db->select(-from => 'environments',
-                                               -where => {id => $env_id})->hashes->first; };
+        my $pb = eval { $self->sql->db->select($env_table, undef, {id => $env_id})->hashes->first; };
         if (!defined $pb) {
             my $error_msg = "Can't find environment (id=$env_id)";
             $self->log->error($error_msg);
