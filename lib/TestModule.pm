@@ -213,6 +213,7 @@ sub check_exit {
         local $SIG{'STOP'} = sub { $signal_received = "Stopped" };
         local $SIG{'TERM'} = sub { $signal_received = "Term" };
         local $SIG{'KILL'} = sub { $signal_received = "Kill" };
+        local $SIG{'QUIT'} = sub { $signal_received = "Quit" };
 
         # this one won't work with apostrophes like above
         local $SIG{__DIE__} = sub { $signal_received = "Die" };
