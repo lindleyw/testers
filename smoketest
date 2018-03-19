@@ -629,7 +629,7 @@ To display the last several reports (defaults to 50):
                                                   $info->first->@{qw/name version released/},
                                                   $_->{notes}->{perl_version} // '',
                                                   sprintf('%8.2f',$_->{elapsed_time}),
-                                                  eval{$_->{args}->[0]->{grade}} // '(unknown)',
+                                                  eval{$_->{grade}} // '(unknown)',
                                                   defined $_->{report_sent} ? 'Yes' : ' - ',
                                                 ]
                                             }
