@@ -792,6 +792,7 @@ plugin 'Yancy' => {
                                                                                  readOnly => 1,
                                                                                },
                                                                     state => { enum => [qw(inactive active failed finished)],
+                                                                               type => ['string','null'],
                                                                              },
                                                                   }
                                                   },
