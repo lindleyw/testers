@@ -367,18 +367,6 @@ get '/tests/#release' => sub {
     }
 };
 
-get '/tests/distribution/:distribution' => sub {
-    my $self = shift;
-
-    my $result = eval { $self->db->query('SELECT * FROM tests WHERE release_id in (SELECT id FROM releases WHERE distribution=?)',
-                                         $self->stash('distribution'))->hashes; };
-    if (defined $result) {
-        $self->render(json => $result);
-    } else {
-        $self->render(json => {error => 'No tests have been run, or Distribution not found'});
-    }
-};
-
 get '/test/:id' => sub {
     my $self = shift;
 
@@ -390,6 +378,33 @@ get '/test/:id' => sub {
                           any => {text => eval{$result->[0]->{build_log}}});
     } else {
         $self->render(json => {error => 'Test not found'});
+    }
+};
+
+get '/tests/distribution/:name' => sub {
+    my $self = shift;
+    my $reports = $self->app->smoker->reports_for_name($self->stash('name'));
+    my $result;
+    if (defined $reports && scalar @{$reports}) {
+        $result = [ map {
+            my $info = $self->app->smoker->get_release_info({id => $_->{release_id}});
+            if (!defined $info || !$info->size) {
+                ()
+            } else {
+                { id => $_->{id},
+                  $info->first->%{qw/name version released/},
+                  perl_version => $_->{notes}->{perl_version} // '',
+                  elapsed_time => $_->{elapsed_time},
+                  grade => eval{$_->{grade}} // '(unknown)',
+                  report_sent => $_->{report_sent},
+              }
+            }
+        } @{$reports} ];
+    }
+    if (defined $result) {
+        $self->render(json => $result);
+    } else {
+        $self->render(json => {error => 'No tests have been run, or Distribution not found'});
     }
 };
 

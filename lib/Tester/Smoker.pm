@@ -667,9 +667,7 @@ package Tester::Smoker {
         local $ENV{MOJO_CONFIG} = undef;
 
         # Test the specific version we asked for
-        my $command;
-
-        my ($build_log, $build_error_log);
+        my ($command, $build_log, $build_error_log);
 
         # Choose a (Perlbrew) environment, or use the current (system, or other) Perl
         if (!defined $env_id) { # use currently installed version
@@ -710,7 +708,7 @@ package Tester::Smoker {
             $minion_job->finish($log_msg);
         }
 
-        # Enqueue the report to be processed and sent later
+        # Enqueue the report for later processing
         $self->log->info("enqueueing Report");
         my $test_id = $self->save_test({release => $module_info->{name},
                                         release_id => $release_id,
@@ -750,13 +748,32 @@ package Tester::Smoker {
     sub report_for {
         my ($self, $test_id) = @_;
 
-        my $result = eval { $self->sql->db->query(
-'SELECT releases.name, releases.distribution, releases.version, tests.elapsed_time, tests.grade, tests.build_log, tests.report, tests.test_error, tests.reporter_error, environments.* FROM releases, environments,tests WHERE releases.id=tests.release_id AND environments.id=tests.environment_id AND tests.id=? LIMIT 1',
-                                             $test_id)->hashes->first; };
-        # print "BORK";
-        # print "BORKER";
-        return $result;
+        return eval { $self->sql->db->select(
+                                             -from => [qw(releases environments tests)],
+                                             -columns => [qw(releases.name releases.distribution releases.version
+                                                             tests.elapsed_time tests.grade tests.build_log tests.report
+                                                             tests.test_error tests.reporter_error environments.*)],
+                                             -where => { 'releases.id' => {-ident => 'tests.release_id'},
+                                                         'environments.id' => {-ident => 'tests.environment_id'},
+                                                         'tests.id' => $test_id },
+                                             -limit => 1)->hashes->first };
+    }
 
+    sub reports_for_name {
+        my ($self, $release_name, $count) = @_;
+        if (defined $release_name) {    # actually dist_name here
+            $release_name =~ s/::/-/g;  # as saved in database
+        }
+        my $reports = eval { $self->sql->db->select( -from => 'tests',
+                                                     (defined $release_name)
+                                                     ? (-where => {
+                                                                   '(select name from releases where releases.id=tests.release_id)' =>
+                                                                   {-like => "%${release_name}%"}})
+                                                     : (),
+                                                     -order_by => '-id',
+                                                     -limit => $count // 50,
+                                                   )->hashes; };
+        return $reports;
     }
 
     ################

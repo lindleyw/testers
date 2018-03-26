@@ -1,4 +1,4 @@
-package main::Command::rebuild {
+package Smoketest::Command::rebuild {
 
     use Mojo::Base 'Mojolicious::Command';
 

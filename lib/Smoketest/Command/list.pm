@@ -1,4 +1,4 @@
-package Mojolicious::Command::list {
+package Smoketest::Command::list {
     use Mojo::Base 'Mojolicious::Command';
     use Minion::Backend;
     use Mojo::Util qw(getopt);

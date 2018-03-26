@@ -1,4 +1,4 @@
-package main::Command::report {
+package Smoketest::Command::report {
     use Mojo::Base 'Mojolicious::Command';
     use Mojo::Util qw(getopt);
 
@@ -41,20 +41,8 @@ To display the last several reports (defaults to 50):
           ;
         my ($id, $what) = @args;  # remaining arguments
 
-        if ($list) {
-            if (defined $id) {    # actually dist_name here
-                $id =~ s/::/-/g;  # as saved in database
-            }
-            
-            my $reports = eval { $self->app->db->select( -from => 'tests',
-                                                         (defined $id) ?
-                                                         (-where => {
-                                                                     '(select name from releases where releases.id=tests.release_id)' =>
-                                                                     {-like => "%${id}%"}})
-                                                         : (),
-                                                         -order_by => '-id',
-                                                         -limit => $count // 50,
-                                                       )->hashes; };
+        if ($list) {   # optional value ($id) is a distribution name
+            my $reports = $self->app->smoker->reports_for_name($id, $count);
             if (defined $reports && scalar @{$reports}) {
                 print Mojo::Util::tablify [ [qw/Report_ID Distribution Version Release_Date Perl Runtime Grade Sent/],
                                         map {
@@ -78,9 +66,9 @@ To display the last several reports (defaults to 50):
 
         die "Must specify report ID" unless defined $id;
 
-        my $result = eval { $self->app->db->query('SELECT * FROM tests WHERE id=?',$id)->hashes; };
-        if (defined $result && scalar @{$result}) {
-            print ((eval{$result->[0]->{$what // 'report'}} // '(undefined)')."\n");
+        my $result = $self->app->smoker->report_for($id);
+        if (defined $result) {
+            print ((eval{$result->{$what // 'report'}} // '(undefined)')."\n");
         } else {
             print "No test result found for id=$id\n";
         }

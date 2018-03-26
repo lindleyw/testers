@@ -1,4 +1,4 @@
-package main::Command::regex {
+package Smoketest::Command::regex {
     use Mojo::Base 'Mojolicious::Command';
 
     has 'description' => 'Retrieves and updates, from metacpan, the cached copy of the regex for disabled modules';

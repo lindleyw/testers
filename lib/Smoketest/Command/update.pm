@@ -1,4 +1,4 @@
-package main::Command::update {
+package Smoketest::Command::update {
     use Mojo::Base 'Mojolicious::Command';
     use Mojo::Util qw(getopt);
 

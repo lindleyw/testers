@@ -1,4 +1,4 @@
-package main::Command::compare {
+package Smoketest::Command::compare {
     use Mojo::Base 'Mojolicious::Command';
     use Mojo::Util qw(getopt);
 

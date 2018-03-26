@@ -1,4 +1,4 @@
-package main::Command::reload {
+package Smoketest::Command::reload {
     use Mojo::Base 'Mojolicious::Command';
 
     has 'description' => 'Reloads the entire list of modules from MetaCPAN';

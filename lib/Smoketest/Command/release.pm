@@ -1,4 +1,4 @@
-package main::Command::release {
+package Smoketest::Command::release {
     use Mojo::Base 'Mojolicious::Command';
     use Minion::Backend;
     use Mojo::Util qw(getopt);

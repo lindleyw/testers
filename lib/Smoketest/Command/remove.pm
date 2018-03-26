@@ -1,4 +1,4 @@
-package main::Command::remove {
+package Smoketest::Command::remove {
     use Mojo::Base 'Mojolicious::Command';
     use Minion::Backend;
     use Mojo::Util qw(getopt);

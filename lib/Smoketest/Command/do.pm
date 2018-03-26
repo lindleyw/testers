@@ -1,4 +1,4 @@
-package main::Command::do {
+package Smoketest::Command::do {
     use Mojo::Base 'Mojolicious::Command';
 
     has 'description' => 'Run any enqueued tests immediately, without using Minion workers';
