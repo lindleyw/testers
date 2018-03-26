@@ -27,9 +27,6 @@ package Tester::Smoker {
     has '_update_regex'; # Flag set when we find a new version of
                          # CPAN, to remind us to fetch and save the
                          # appropriate new regex
-    has 'report_queue' => 'deferred'; # Default to deferring reports.
-                                      # 'default' will cause them to
-                                      # be dequeued.
 
     use TestModule;
     has 'tester' => sub {
@@ -743,7 +740,7 @@ package Tester::Smoker {
                                                  duration => $result->{elapsed_time},
                                                  @show_error,
                                                 }],
-                                     {queue => $self->report_queue,
+                                     {queue => ($self->config->{report_queue} // 'deferred'),
                                       parents => [$minion_job->info->{id}]});
         $self->log->info("Report enqueued");
     }

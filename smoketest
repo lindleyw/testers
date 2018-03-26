@@ -29,695 +29,14 @@ our $VERSION='0.01';
 #   --start_date=2012-07-01 --end_date=2012-12-30
 
 ################################################################
-
-package main::Command::release {
-    use Mojo::Base 'Mojolicious::Command';
-    use Minion::Backend;
-    use Mojo::Util qw(getopt);
-
-    has 'description' => 'Release a currently-enqueued report';
-
-=pod
-
-=head2 Release
-
-=cut
-
-    has usage => <<"=cut" =~ s/  APPLICATION/$0/rg =~ s/\s+=pod\s+//rs;
-
-=pod
-
-Usage: APPLICATION release [IDS] [-count N]
-
-Releases one or more report jobs by ID, or from newest by count
-=cut
-
-    sub run {
-        my ($self, @args) = @_;
-
-        getopt \@args, [qw(auto_abbrev)],
-        'count=i' => \my $count,
-          ;
-        my @ids = @args; # remaining
-
-        if (!scalar @ids) {
-            my $jobs = $self->app->minion->backend->list_jobs(0, $count // 1,  # offset, limit
-                                                              {state => 'inactive',
-                                                               task => 'report',
-                                                               queue => 'deferred',
-                                                              }
-                                                             );
-            @ids = map { $_->{id} // () } @{$jobs->{jobs}}; # just the list of IDs
-        }
-
-        if (!scalar @ids) {
-            $self->app->log->info("No jobs found to retry");
-        }
-        foreach my $id (@ids) {
-            # ; $DB::single = 1;
-            my $job = $self->app->minion->job($id);
-            if (defined $job) {
-                if ($job->retry({queue => 'default'})) {
-                    $self->app->log->info("Released report job $id");
-                } else {
-                    $self->app->log->error("Failed to release job $id");
-                }
-            } else {
-                $self->app->log->error("Failed to release job $id (ID not found)");
-            }
-        }
-
-    }
-}
-
-################################################################
-
-package main::Command::remove {
-    use Mojo::Base 'Mojolicious::Command';
-    use Minion::Backend;
-    use Mojo::Util qw(getopt);
-
-    has 'description' => 'Remove a currently-enqueued test';
-
-=pod
-
-=head2 Remove
-
-=cut
-
-    has usage => <<"=cut" =~ s/  APPLICATION/$0/rg =~ s/\s+=pod\s+//rs;
-
-=pod
-
-Usage: APPLICATION remove [IDS] [-count N]
-
-Removes one or more enqueued Minion jobs by ID, or from newest by count
-=cut
-
-    sub run {
-        my ($self, @args) = @_;
-
-        getopt \@args, [qw(auto_abbrev)],
-        'count=i' => \my $count,
-          ;
-        my @ids = @args; # remaining
-
-        if (!scalar @ids) {
-            my $jobs = $self->app->minion->backend->list_jobs(0, $count // 1,  # offset, limit
-                                                              {state => 'inactive',
-                                                               task => 'test',
-                                                               queue => 'default',
-                                                              }
-                                                             );
-            @ids = map { $_->{id} // () } @{$jobs->{jobs}}; # just the list of IDs
-        }
-
-        if (!scalar @ids) {
-            $self->app->log->info("No jobs found to remove");
-        }
-        foreach my $id (@ids) {
-            my $job = $self->app->minion->job($id);
-            if (defined $job) {
-                if ($job->remove) {
-                    $self->app->log->info("Removed job $id");
-                } else {
-                    $self->app->log->error("Failed to remove job $id");
-                }
-            } else {
-                $self->app->log->error("Failed to remove job $id (ID not found)");
-            }
-        }
-
-    }
-}
-
-################################################################
-
-package main::Command::list {
-    use Mojo::Base 'Mojolicious::Command';
-    use Minion::Backend;
-    use Mojo::Util qw(getopt);
-
-    has 'description' => 'List currently-enqueued tests to be run';
-
-=pod
-
-=head2 List
-
-=cut
-
-    has usage => <<"=cut" =~ s/  APPLICATION/$0/rg =~ s/\s+=pod\s+//rs;
-
-=pod
-
-Usage: APPLICATION list [state] [-count N] [-reports]
-
-Lists jobs in state (inactive (*), finished, failed) (*) default
-
-To display enqueued jobs:
-
-    APPLICATION list
-
-To display completed jobs:
-
-    APPLICATION list finished
-
-To display a list of enqueued test report submissions for completed
-jobs (reports have different IDs than jobs):
-
-    APPLICATION list -r
-
-To list submitted test reports, see:
-
-    APPLICATION report -l
-
-Then to display the actual report, do:
-
-    APPLICATION report TEST_ID
-
-=cut
-
-    sub run {
-        my ($self, @args) = @_;
-
-        getopt \@args, [qw(auto_abbrev)],
-        'count=i' => \my $count,
-        'report'  => \my $show_defer,
-          ;
-
-
-        my $job_state = $args[0] // 'inactive';    # 'finished' or 'failed' are useful
-        my $jobs = $self->app->minion->backend->list_jobs(0, $count // 50,  # offset, limit
-                                                          {state => $job_state,
-                                                           task => ($show_defer ? 'report' : 'test'),
-                                                           $show_defer ? (queue => 'deferred') : (),
-                                                          }
-                                                         );
-        if ($show_defer) {
-            # Show queued report jobs which are held for manual release
-            # TODO: Combine with 'unfinished' tablify below
-            print Mojo::Util::tablify [ [qw/Job Status Test_ID Distribution Version Perl Grade/],
-                                        map {
-                                            my $release_id = eval{$_->{args}->[0]->{'release_id'}};
-                                            if (defined $release_id) {
-                                                my $info = $self->app->smoker->get_release_info({id => $release_id}) if defined $release_id;
-                                                if (!defined $info || !$info->size) {
-                                                    ()
-                                                } else {
-                                                    [ $_->{id}, $_->{state},
-                                                      eval{$_->{args}->[0]->{test_id}} // '',
-                                                      $info->first->@{qw/name version/},
-                                                      $_->{notes}->{perl_version} // '',
-                                                      eval{$_->{args}->[0]->{grade}} // '(unknown)',
-                                                    ]
-                                                }
-                                            } else {
-                                                ()
-                                            }
-                                        }
-                                        @{$jobs->{jobs}} ];
-        } else {
-            if ($job_state eq 'finished') {
-                print Mojo::Util::tablify [ [qw/Job Perl Result/],
-                                            map {
-                                                [ $_->{id}, $_->{notes}->{perl_version},
-                                                  $_->{result}
-                                                ]
-                                            }
-                                            @{$jobs->{jobs}} ];
-            } else { 
-                print Mojo::Util::tablify [ [qw/Job Status Distribution Version Author Perl/],
-                                            map {
-                                                my $release_id = eval{$_->{args}->[0]->{'release_id'}};
-                                                if (defined $release_id) {
-                                                    my $info = $self->app->smoker->get_release_info({id => $release_id}) if defined $release_id;
-                                                    if (!defined $info || !$info->size) {
-                                                        ()
-                                                    } else {
-                                                        [ $_->{id}, $_->{state},
-                                                          $info->first->@{qw/name version author/},
-                                                          $_->{notes}->{perl_version} // '',
-                                                        ]
-                                                    }
-                                                } else {
-                                                    ()
-                                                }
-                                            }
-                                            @{$jobs->{jobs}} ];
-            }
-        }
-        return;
-    }
-};
-
-################################################################
-
-package main::Command::regex {
-    use Mojo::Base 'Mojolicious::Command';
-
-    has 'description' => 'Retrieves and updates, from metacpan, the cached copy of the regex for disabled modules';
-
-=pod
-
-=head2 Regex
-
-=cut
-
-    has usage => <<"=cut" =~ s/  APPLICATION/$0/rg =~ s/\s+=pod\s+//rs;
-
-=pod
-
-Usage: APPLICATION regex [yaml_file_path_or_URL]
-
-Fetches and saves a YAML file containing a regular expression which
-will either enable or disable modules. Usually only one of these is
-used, namely the most recent 01.DISABLED.yml from CPAN. However, if
-you wish to override some of that behaviour, you may add your own
-regular expressions.  Your enable/disable regular expressions will be
-processed after the default CPAN one.
-
-The ability to manage and rearrange these regular expressions in the
-smoker database is left as an exercise to the student.
-
-=cut
-
-    sub run {
-        my ($self, @args) = @_;
-
-        return $self->app->smoker->fetch_and_save_regex(@args);
-    }
-
-};
-
-################################################################
-
-package main::Command::reload {
-    use Mojo::Base 'Mojolicious::Command';
-
-    has 'description' => 'Reloads the entire list of modules from MetaCPAN';
-
-=pod
-
-=head2 Reload
-
-=cut
-
-    has usage => <<"=cut" =~ s/  APPLICATION/$0/rg =~ s/\s+=pod\s+//rs;
-
-=pod
-
-Usage: APPLICATION reload [options]
-
-Reloads the entire list of current packages from CPAN, usually from
-its 02packages.details.txt file.
-
-=cut
-
-    sub run {
-        my ($self, @args) = @_;
-        my $updated_releases = $self->app->smoker->get_all(@args);
-        if ($self->app->smoker->check_regex(release_id => $updated_releases)) {
-            $self->app->log->info("modules updated OK");
-        } else {
-            $self->app->log->error("could not update module list");
-        }
-    }
-};
-
-################################################################
-
-package main::Command::update {
-    use Mojo::Base 'Mojolicious::Command';
-    use Mojo::Util qw(getopt);
-
-    has 'description' => 'Retrieves distribution info from MetaCPAN. Enqueues tests.';
-
-=pod
-
-=head2 Update
-
-=cut
-
-    has usage => <<"=cut" =~ s/  APPLICATION/$0/rg =~ s/\s+=pod\s+//rs;
-
-=pod
-
-Usage: APPLICATION update [-v|--verbose] [-count=N] [-force] [-notest] [--distribution=DIST]
-                          [--version=N.NN] [--release=N] [--author=N] [--perl_version=N]
-                          [--start_date=YYYY-MM-DD] [--end_date=YYYY-MM-DD]
-
-Retrieve a list of Perl module distributions from CPAN.
-
-Examples:
-
-Testing the latest 20 distributions:
-
-    APPLICATION update --count=20
-
-Testing the latest distributions from an author:
-
-    APPLICATION update --count=5 --author=PREACTION
-
-Testing the latest 20 distributions on two different Perl versions:
-
-    APPLICATION update --count=20 --perl 5.26.1,5.24.1
-
-or, equivalently,
-
-    APPLICATION update --count 20 --perl 5.26.1 --perl 5.24.1
-
-Testing a specific distribution:
-
-    APPLICATION update --perl 5.26.1,5.24.1 Time::MockTime::HiRes
-
-will enqueue two tests, one for each version of Perl given, on the
-latest version of the Time::MockTime::HiRes distribution.  To re-test
-this distribution after those tests complete, use the --force switch:
-
-    APPLICATION update --perl 5.26.1,5.24.1 Time::MockTime::HiRes -f
-
-=cut
-
-    sub run {
-        my ($self, @args) = @_;
-        getopt \@args, [qw(auto_abbrev)],
-          'v|verbose' => \my $verbose,   # Note abbrev, versus -version below
-          'count=i' => \my $count,
-          'force'   => \my $force_test,
-          'notest'  => \my $skip_tests,
-          'distribution|distro=s' => \my @dists,
-          'version=s' => \my @versions,  # one 'Release' is a 'Distribution-Version' combination,
-          'release=s' => \my @releases,  # so generally either specify release or distro(+version).
-          'author=s' => \my @authors,
-          'perl_version=s' => \my @perl_versions,
-          'start_date=s' => \my $start_date,
-          'end_date=s'   => \my $end_date;
-
-        push @dists, @args;              # Remaining arguments are module names
-
-        # Split/join to also permit comma-delimited
-        my $releases =
-          $self->app->smoker->get_metacpan( { count => $count,
-                                              main_module => [split ',', join ',', @dists],
-                                              name => [split ',', join ',', @releases],
-                                              version => [split ',', join ',', @versions],
-                                              author => [split ',', join ',', @authors],
-                                              start_date => $start_date,
-                                              end_date => $end_date,
-                                            } );
-
-        # Ensure updated list of installed Perl versions
-        $self->app->smoker->update_perl_versions(@args);
-
-        my @perl_test_versions;
-        foreach my $v (split ',', join ',', @perl_versions) {
-            # Look for Perlbrew name first, then Perl's self-reported version
-            my $vv = $self->app->smoker->get_environment({perlbrew => $v}) //
-                $self->app->smoker->get_environment({perl => $v});
-            if (defined $vv) {
-                push @perl_test_versions, $vv
-            } else {
-                die "Perl version ($v) not found";
-            }
-        }
-        # Default to current environment
-        if (!scalar @perl_test_versions) {
-          @perl_test_versions = ($self->app->smoker->get_environment({id => $self->app->smoker->my_environment()}));
-        }
-        # Enqueue tests for each of those releases.
-        my $added = 0;
-        if (defined $releases && !$skip_tests) {
-          $self->app->log->info('Considering ' . $releases->size . ' releases') if $verbose;
-          $releases->each(sub {
-                            my $id = $_->{id};
-                            # TODO: Move below into separate routine
-                            # TODO: Probably move enqueue() calls into Smoker
-                            foreach my $v (@perl_test_versions) {
-                                # XXX: ?+0 to work around DBD::SQLite issue; c.f.
-                                # https://metacpan.org/pod/DBD::SQLite#Add-zero-to-make-it-a-number
-                                my $skip;
-                                if (!defined $force_test) {
-                                    $skip = eval{$self->app->sql->db->query(q{SELECT id FROM minion_jobs WHERE }.
-                                                                            q{(task='test') AND }.
-                                                                            q{json_extract(args,'$[0].release_id')=?+0 }.
-                                                                            q{AND json_extract(args,'$[0].environment')=?+0},
-                                                                            $id, $v->{id})->hashes->first->{id}};
-                                    $skip //= eval{$self->app->sql->db->select(-from => 'tests',
-                                                                               -where => {release_id => $id,
-                                                                                          environment_id => $v})
-                                                   ->hashes->first->{id}};
-                                    $skip = " (skipping, already tested)" if defined $skip;
-                                }
-                                $self->app->log->info('  ... ' . $_->{name} .
-                                                      ' (Perl ' . ($v->{perlbrew} // $v->{perl}) . ')' .
-                                                      ($skip//''))
-                                  if $verbose;
-                                if (!defined $skip) {
-                                    $self->app->minion->enqueue(test => [{release_id => $id, environment => $v->{id}}],
-                                                                {notes => {module_info => $_,
-                                                                           perl_version => ($v->{perlbrew} // $v->{perl})
-                                                                          }});
-                                    $added++;
-                                }
-                            }
-                        });
-          $self->app->log->info("Releases added: $added");
-      }
-
-    }
-};
-
-################################################################
-
-package main::Command::do {
-    use Mojo::Base 'Mojolicious::Command';
-
-    has 'description' => 'Run any enqueued tests immediately, without using Minion workers';
-
-=pod
-
-=head2 Do
-
-=cut
-
-    has usage => <<"=cut" =~ s/  APPLICATION/$0/rg =~ s/\s+=pod\s+//rs;
-
-=pod
-
-Force immediate in-this-thread execution of all Minion jobs
-sequentially
-
-Compare to:
-
-    APPLICATION minion worker
-
-which starts a Minion worker daemon to process jobs, potentially
-running multiple jobs simultaneously.
-
-=cut
-
-    sub run {
-        my ($self) = @_;
-        if (!$self->app->smoker->tester->verify) {
-            die "Cannot run tests. (Have you configured an email address for cpanm-reporter?)"
-        }
-        $self->app->minion->perform_jobs();
-    }
-};
-
-################################################################
-
-package main::Command::rebuild {
-
-    use Mojo::Base 'Mojolicious::Command';
-
-    has 'description' => 'Discard the entire testing database and rebuild its structure.';
-
-=pod
-
-=head2 Rebuild
-
-=cut
-
-    has usage => <<"=cut" =~ s/  APPLICATION/$0/rg =~ s/\s+=pod\s+//rs;
-
-=pod
-
-    APPLICATION rebuild
-
-=cut
-
-    sub run {
-      my ($self) = @_;
-
-      state $smoker = Tester::Smoker->new(database => $self->app->config->{dbname},
-                                          config   => $self->app->config,
-                                          log      => $self->app->log,
-                                          rebuild  => 1,
-                                         );
-      $self->app->minion->reset;    # Also clear the Minion job queue
-    }
-};
-
-################################################################
-
-package main::Command::report {
-    use Mojo::Base 'Mojolicious::Command';
-    use Mojo::Util qw(getopt);
-
-    has 'description' => 'Displays the build log for the given report ID number';
-
-=pod
-
-=head2 Report
-
-=cut
-
-    has usage => <<"=cut" =~ s/  APPLICATION/$0/rg =~ s/\s+=pod\s+//rs;
-
-=pod
-
-To display the report which would be submitted for a completed test,
-by Test ID:
-
-    APPLICATION report 17
-
-To display other data about a completed test, by ID:
-
-    APPLICATION report 17 build_log
-    APPLICATION report 17 test_error    # the STDERR log
-    APPLICATION report 17 grade
-    APPLICATION report 17 elapsed_time
-
-To display the last several reports (defaults to 50):
-
-    APPLICATION report -l [-count 50] [dist_name]
-
-=cut
-
-    sub run {
-
-        my ($self, @args) = @_;
-        getopt \@args, [qw(auto_abbrev)],
-          'list' => \my $list,
-          'count=i' => \my $count,
-          ;
-        my ($id, $what) = @args;  # remaining arguments
-
-        if ($list) {
-            if (defined $id) {    # actually dist_name here
-                $id =~ s/::/-/g;  # as saved in database
-            }
-            
-            my $reports = eval { $self->app->db->select( -from => 'tests',
-                                                         (defined $id) ?
-                                                         (-where => {
-                                                                     '(select name from releases where releases.id=tests.release_id)' =>
-                                                                     {-like => "%${id}%"}})
-                                                         : (),
-                                                         -order_by => '-id',
-                                                         -limit => $count // 50,
-                                                       )->hashes; };
-            if (defined $reports && scalar @{$reports}) {
-                print Mojo::Util::tablify [ [qw/Report_ID Distribution Version Release_Date Perl Runtime Grade Sent/],
-                                        map {
-                                            my $info = $self->app->smoker->get_release_info({id => $_->{release_id}});
-                                            if (!defined $info || !$info->size) {
-                                                ()
-                                            } else {
-                                                [ $_->{id},
-                                                  $info->first->@{qw/name version released/},
-                                                  $_->{notes}->{perl_version} // '',
-                                                  sprintf('%8.2f',$_->{elapsed_time}),
-                                                  eval{$_->{grade}} // '(unknown)',
-                                                  defined $_->{report_sent} ? 'Yes' : ' - ',
-                                                ]
-                                            }
-                                        }
-                                            @{$reports} ];
-            }
-            return;
-        }
-
-        die "Must specify report ID" unless defined $id;
-
-        my $result = eval { $self->app->db->query('SELECT * FROM tests WHERE id=?',$id)->hashes; };
-        if (defined $result && scalar @{$result}) {
-            print ((eval{$result->[0]->{$what // 'report'}} // '(undefined)')."\n");
-        } else {
-            print "No test result found for id=$id\n";
-        }
-    }
-};
-
-################################################################
-
-package main::Command::compare {
-    use Mojo::Base 'Mojolicious::Command';
-    use Mojo::Util qw(getopt);
-
-    has 'description' => 'Compares local distribution test results with those on cpantesters.org';
-
-=pod
-
-=head2 Compare
-
-=cut
-
-    has usage => <<"=cut" =~ s/  APPLICATION/$0/rg =~ s/\s+=pod\s+//rs;
-
-=pod
-
-    APPLICATION compare
-
-=cut
-    sub run {
-        my ($self, @args) = @_;
-
-        getopt \@args, [qw(auto_abbrev)],
-          'v|verbose' => \my $verbose,   # Note abbrev, versus -version below
-          'count=i' => \my $count,
-          'distribution|distro=s' => \my @dists,
-          'version=s' => \my @versions,  # one 'Release' is a 'Distribution-Version' combination
-          'author=s' => \my @authors,
-          'perl_version=s' => \my @perl_versions,
-          'start_date=s' => \my $start_date,
-          'end_date=s'   => \my $end_date;
-
-        my $releases = $self->app->smoker->get_releases( { distribution => \@dists,
-                                                           version => \@versions,
-                                                           author => \@authors,
-                                                         } );
-
-        print "Found the following distributions:\n\n";
-        print Mojo::Util::tablify [ [qw/id distribution version author/],
-                                    map { [$_->@{qw(id distribution version author)}] } @{$releases} ];
-        print "\n";
-
-        # build a hash, key being the distribution name, value being an array of matching id's.
-        my %release_ids;
-        foreach my $rel (@{$releases}) {
-            push @{$release_ids{$rel->{distribution}}}, $rel->{id};
-        }
-
-        foreach (sort keys %release_ids) {
-            $self->app->smoker->compare_tests({distribution => $_, id => $release_ids{$_}});
-        }
-    }
-
-};
-
-
-################################################################
 ################################################################
 ################################################################
 
-app->secrets(['Get your fresh smoked red-hot modules here!']);
-get '/' => 'index';
+plugin 'Config';
 
 push @{app->commands->namespaces}, 'main::Command';
 
-plugin 'Config';
+app->secrets(app->config->{secrets} // ['Get your fresh smoked red-hot modules here!']);
 
 helper smoker => sub {
     my ($self) = @_;
@@ -725,16 +44,6 @@ helper smoker => sub {
     state $smoker = Tester::Smoker->new(database => $self->config->{dbname},
                                         config   => $self->config,
                                         log      => $self->app->log,
-                                        # authors  => \@authors,
-                                        # modules  => \@modules,
-                                        # versions => \@versions,
-                                        # perl_versions => \@perl_versions,
-                                        # recent   => $freshness,
-                                        # start_date => $start_date,
-                                        # end_date => $end_date,
-                                        # count    => $count,
-                                        # force_test => $force_test,
-                                        # verbose  => $verbose,
                                         app => $self->app,
                                        );
 
@@ -758,7 +67,7 @@ helper db => sub {
 
 plugin Minion => {SQLite => 'sqlite:'. app->config->{dbname}};
 plugin 'Minion::Admin';
-# print STDERR app->config->{dbname} . "\n";
+
 plugin 'Yancy' => {
                    backend => 'sqlite:'. app->config->{dbname},
                    collections => {
@@ -932,19 +241,11 @@ plugin 'Yancy' => {
                                   },
                   };
 
-################
+################################################################
 
-app->minion->add_task( test => sub { my ($job, @args) = @_;
-                                     my ($result, @result_args) = $job->app->smoker->test($job, @args);
-                                     if ($result eq 'success') {
-                                         $job->finished(@result_args);
-                                     } elsif ($result eq 'error') {
-                                         $job->fail(@result_args);
-                                     } else {
-                                         # TODO: Better define why/when this can happen
-                                         # $job->retry(@result_args);
-                                     }
-                                 } );
+get '/' => 'index';
+
+################################################################
 
 get '/releases' => sub {
     my $self = shift;
@@ -995,18 +296,6 @@ get '/author/:auth' => sub {
     }
 };
 
-get '/tests' => sub {
-    my $self = shift;
-
-    my $result = $self->smoker->get_all_tests();
-
-    if (defined $result) {
-        $self->render(json => $result);
-    } else {
-        $self->render(json => {error => 'Tests not found'});
-    }
-};
-
 ################
 
 get '/report/:id' => sub {
@@ -1041,6 +330,30 @@ app->minion->add_task ( report => sub { my ($job, @args) = @_;
                       );
 
 ################
+
+app->minion->add_task( test => sub { my ($job, @args) = @_;
+                                     my ($result, @result_args) = $job->app->smoker->test($job, @args);
+                                     if ($result eq 'success') {
+                                         $job->finished(@result_args);
+                                     } elsif ($result eq 'error') {
+                                         $job->fail(@result_args);
+                                     } else {
+                                         # TODO: Better define why/when this can happen
+                                         # $job->retry(@result_args);
+                                     }
+                                 } );
+
+get '/tests' => sub {
+    my $self = shift;
+
+    my $result = $self->smoker->get_all_tests();
+
+    if (defined $result) {
+        $self->render(json => $result);
+    } else {
+        $self->render(json => {error => 'Tests not found'});
+    }
+};
 
 get '/tests/#release' => sub {
     my $self = shift;
@@ -1080,6 +393,8 @@ get '/test/:id' => sub {
     }
 };
 
+###
+
 app->minion->add_task ( update => sub { my ($job, @args) = @_;
                                                 my $results = $job->app->smoker->get_recent(@args);
                                                 if (defined $results) {
@@ -1114,11 +429,13 @@ del '/job/:id' => sub {
     $self->render(json => {success => $deleted});
 };
 
-get '/jobs/stats' => sub {
+get '/jobs/stats' => sub {   # Minion Admin API
     my ($self) = @_;
     my $stats = $self->minion->stats;
     $self->render(json => $stats);
 };
+
+################################################################
 
 app->start;
 
