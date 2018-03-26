@@ -34,7 +34,7 @@ our $VERSION='0.01';
 
 plugin 'Config';
 
-push @{app->commands->namespaces}, 'main::Command';
+push @{app->commands->namespaces}, 'Smoketest::Command';
 
 app->secrets(app->config->{secrets} // ['Get your fresh smoked red-hot modules here!']);
 

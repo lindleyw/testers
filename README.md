@@ -137,6 +137,15 @@ To display enqueued jobs:
 
     $ ./smoketest list
 
+To display tests currently being executed:
+
+    $ ./smoketest list active
+
+    $ ./smoketest list active
+    Job  Status  Distribution            Version  Author   Perl
+    87   active  Data-ObjectStore-1.103  1.103    CANID    5.26.0
+    85   active  App-SimulateReads-0.13  0.13     TMILLER  5.26.0
+
 To display completed jobs:
 
     $ ./smoketest list finished
@@ -194,15 +203,6 @@ address specified as above)
 Other Minion Worker command parameters are listed at:
 
     $ ./smoketest minion help worker
-
----
-
-To see a list of tests currently being executed:
-
-    $ ./smoketest list active
-    Job  Status  Distribution            Version  Author   Perl
-    87   active  Data-ObjectStore-1.103  1.103    CANID    5.26.0
-    85   active  App-SimulateReads-0.13  0.13     TMILLER  5.26.0
 
 ---
 
