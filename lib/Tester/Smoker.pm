@@ -691,6 +691,7 @@ package Tester::Smoker {
             my $log_msg = "Using Perl version ".$pb->{perl};
             $log_msg .= ", Perlbrew installation ".$pb->{perlbrew} if defined $pb->{perlbrew};
             $self->log->info($log_msg);
+            $minion_job->note(perl_using => $log_msg);   # Acts as flag that testing has begun
         }
 
         # Actually run the test

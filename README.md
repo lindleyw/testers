@@ -197,6 +197,15 @@ Other Minion Worker command parameters are listed at:
 
 ---
 
+To see a list of tests currently being executed:
+
+    $ ./smoketest list active
+    Job  Status  Distribution            Version  Author   Perl
+    87   active  Data-ObjectStore-1.103  1.103    CANID    5.26.0
+    85   active  App-SimulateReads-0.13  0.13     TMILLER  5.26.0
+
+---
+
 As tests complete, they will create a Minion job to submit the report
 to the CPANTesters API.  By default these jobs are placed in Minion's
 'deferred' queue and must be manually reviewed before being sent.  You
