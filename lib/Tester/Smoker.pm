@@ -28,10 +28,10 @@ package Tester::Smoker {
                          # CPAN, to remind us to fetch and save the
                          # appropriate new regex
 
-    use TestModule;
+    use Tester::Single;
     has 'tester' => sub {
         my ($self) = @_;
-        state $tm = TestModule->new(log => $self->log);
+        state $tm = Tester::Single->new(log => $self->log);
     };
 
     use Email::Address;

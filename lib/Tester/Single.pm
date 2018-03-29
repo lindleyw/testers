@@ -1,4 +1,4 @@
-package TestModule;
+package Tester::Single;
 
 use v5.10;
 use Mojo::Base '-base';

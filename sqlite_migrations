@@ -59,7 +59,7 @@ CREATE TABLE tests (
                     id INTEGER PRIMARY KEY,
                     release_id INTEGER,       -- UUT [unit under test]
                     environment_id INTEGER,   -- replaces perl_build
-                    -- Data from TestModule:
+                    -- Data from Tester::Single:
                     start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- when testing began (was enqueued)
                     elapsed_time REAL,
                     build_log TEXT,

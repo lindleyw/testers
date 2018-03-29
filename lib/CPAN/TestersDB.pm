@@ -44,7 +44,7 @@ package CPAN::TestersDB {
                              duration => ($test->{duration} // $test->{elapsed_time} // 0) +.5,
                              # XXX: Question: Do we want $test->{build_log} ?
                              # NOTE: {build_log} is the combined stdout+stderr;
-                             # see TestModule::check_exit()
+                             # see Tester::Single::check_exit()
                            },
                  user_agent => $self->config->{user_agent} // 'Smoketest/'.$::VERSION,
                };
