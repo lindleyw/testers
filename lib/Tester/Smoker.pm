@@ -17,7 +17,7 @@ package Tester::Smoker {
     has 'sql' => sub { # Set during instantiation; or, create object
         my ($self) = @_;
         if (defined $self->database) {
-          my $db = Mojo::SQLite->new('sqlite:' . $self->database);
+          my $db = Mojo::SQLite->new('sqlite:' . $self->database . '?PrintError=0');
           # $db->options( {sqlite_see_if_its_a_number => 1} );
           $db->abstract(SQL::Abstract::More->new());
           return $db;
@@ -142,10 +142,12 @@ package Tester::Smoker {
         } else {
             foreach my $v (@perl_versions) {
                 my $id = eval {
-                    $self->sql->db->query('INSERT INTO environments(host, perlbrew) VALUES (?,?)',
-                                          hostname(), $v)->last_insert_id;
+                    $self->sql->db->insert(-into => 'environments',
+                                           -values => {host => hostname(),
+                                                       perlbrew => $v}
+                                          )->last_insert_id;
                 };
-                if (!defined $id) {
+                if (!defined $id) {  # Already exists, use existing
                     $id = eval{$self->sql->db->select(-from => 'environments',
                                                       -columns => 'id',
                                                       -where => { host => hostname(),
@@ -335,11 +337,16 @@ package Tester::Smoker {
         my $id = eval {
             # Database constraint will throw exception if attempt to
             # duplicate (name,version), so blithely we:
-            $self->sql->db->query('INSERT INTO releases(name, distribution, version, released, author, download_url) '.
-                                  'VALUES (?,?,?,?,?,?)',
-                                  $module_name, $fields->{main_module},
-                                  @{$fields}{qw(version date author download_url)})
-            ->last_insert_id;
+            my ($sql, @bind) = 
+            $self->sql->abstract->insert(-into => 'releases',
+                                         -values => {name => $module_name,
+                                                     distribution => $fields->{main_module},
+                                                     released => $fields->{date},
+                                                     %{$fields}{qw(version author download_url)}
+                                                    }
+                                        );
+            $sql =~ s/^INSERT/INSERT OR IGNORE/;   # Until SQL::Abstract::More provides ability
+            $self->sql->db->query($sql, @bind)->last_insert_id;
         };
         # print STDERR "->$id $! $@\n";
         return $id;
@@ -436,7 +443,9 @@ package Tester::Smoker {
 
         my $our_tests = eval { $self->sql->db->select( -from => 'tests',
                                                        -where => {release_id => $args->{id}}, # an array, so creates an IN... clause
-                                                       -columns => [qw(id release_id environment_id start_time elapsed_time grade report_sent)],
+                                                       -columns => [qw(id release_id environment_id
+                                                                       start_time elapsed_time
+                                                                       grade report_sent)],
                                                      )->hashes;
                            };
 

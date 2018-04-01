@@ -228,10 +228,15 @@ sub check_exit {
         eval {
             local $SIG{ALRM} = sub { die $ALARM_EXCEPTION };
             alarm $self->timeout if defined $self->timeout;
-            ($merged_output, my $e_v) =
+            ($merged_output, my $e_v) =  # Note $exit_value, in inner eval:
+
+            # system( $command );
+
             Capture::Tiny::capture_merged( sub {
                                                ($error_output, $exit_value) =
-                                               Capture::Tiny::tee_stderr( sub { system( $command ); });
+                                               Capture::Tiny::tee_stderr( sub {
+                                                                              system( $command );
+                                                                          });
                                            }
                                          );
             alarm 0;

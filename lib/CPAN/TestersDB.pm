@@ -1,9 +1,9 @@
 use strict;
 use warnings;
 
+###
 ### Submission of reports to CPAN Testers.
 ###
-### TODO: Think of an actual name for this.
 
 package CPAN::TestersDB {
 
