@@ -8,7 +8,12 @@ TODO
 
 
 
-
+- Use MetaCPAN::Client;
+  $mcpan = MetaCPAN::Client->new();
+  $dist = $mcpan->release($mcpan->package('Text::Wrap')->data->{distribution});
+ 
+  ^^ retrieves dependency data for a given distribution name
+  See also the {download_url} result parameter.
 
 - When release grade is null, in most cases these reports should not
   be submitted.  It means "something went wrong" and that could have
